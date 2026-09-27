@@ -289,9 +289,17 @@
     color: var(--text);
   }
 
-  .card-menu-wrapper:has(.card-menu.open) .card-menu-btn {
+  /* подсвечиваем ту кнопку, чьё меню сейчас открыто */
+  .card-menu-wrapper:has(.card-menu.open[data-view="root"]) .card-menu-btn:not(.card-tag-btn),
+  .card-menu-wrapper:has(.card-menu.open[data-view="tags"]) .card-tag-btn {
     background: var(--hover);
     color: var(--text);
+  }
+
+  /* кнопки тегов и ⋯ стоят рядом в одной обёртке */
+  .card-menu-wrapper {
+    display: flex;
+    align-items: center;
   }
 
   .cards {

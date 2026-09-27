@@ -30,6 +30,7 @@
     check: svg('<path d="M5 12l5 5 9-10"/>', 16, ' class="card-menu-check" stroke-width="2.2"'),
     chevronRight: svg('<path d="M9 6l6 6-6 6"/>', 14, ' class="card-menu-chevron"'),
     chevronLeft: svg('<path d="M15 6l-6 6 6 6"/>', 14),
+    tag: svg('<path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/>'),
     dots: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>',
     grip: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>'
   };
@@ -81,8 +82,8 @@
   }
 
   // Список тегов, доступных для этой доски — общий для всех карточек.
-  // Задаётся при загрузке доски (см. loadBoard) и меняется через меню
-  // карточки (⋯ → Теги → Новый / крестик у тега в списке).
+  // Задаётся при загрузке доски (см. loadBoard) и меняется через кнопку
+  // тегов на карточке (→ Новый тег / крестик у тега в списке).
   const DEFAULT_TAG_DEFS = [
     { key: 'yellow', label: 'желтый',  color: 'yellow' },
     { key: 'blue',   label: 'синий',   color: 'blue' },
@@ -352,7 +353,9 @@
       saveBoard();
     };
 
-    // --- Меню карточки (три точки) — пока только смена приоритета ---
+    // --- Меню карточки: кнопка тегов (открывает сразу список тегов)
+    // и кнопка ⋯ (приоритет, чекбокс). Обе открывают один и тот же выпадающий
+    // список, поэтому лежат в общей обёртке .card-menu-wrapper ---
     const menuWrapper = document.createElement('div');
     menuWrapper.className = 'card-menu-wrapper';
 
@@ -362,6 +365,13 @@
     menuBtn.innerHTML = ICONS.dots;
     menuBtn.title = 'Меню карточки';
     menuBtn.setAttribute('aria-label', 'Меню карточки');
+
+    const tagBtn = document.createElement('button');
+    tagBtn.type = 'button';
+    tagBtn.className = 'card-menu-btn card-tag-btn';
+    tagBtn.innerHTML = ICONS.tag;
+    tagBtn.title = 'Теги';
+    tagBtn.setAttribute('aria-label', 'Теги');
 
     const menu = document.createElement('div');
     menu.className = 'card-menu';
@@ -373,6 +383,7 @@
 
     function renderMenuRoot() {
       menu.innerHTML = '';
+      menu.dataset.view = 'root';
 
       const priorityItem = document.createElement('button');
       priorityItem.type = 'button';
@@ -383,16 +394,6 @@
         renderMenuPriority();
       };
       menu.appendChild(priorityItem);
-
-      const tagItem = document.createElement('button');
-      tagItem.type = 'button';
-      tagItem.className = 'card-menu-item';
-      tagItem.innerHTML = '<span class="card-menu-item-label">Теги</span>' + ICONS.chevronRight;
-      tagItem.onclick = (e) => {
-        e.stopPropagation();
-        renderMenuTag();
-      };
-      menu.appendChild(tagItem);
 
       const checkboxItem = document.createElement('button');
       checkboxItem.type = 'button';
@@ -443,6 +444,7 @@
 
     function renderMenuTag() {
       menu.innerHTML = '';
+      menu.dataset.view = 'tags';
 
       const currentKeys = new Set((el.dataset.tags || '').split(',').filter(Boolean));
 
@@ -514,6 +516,7 @@
 
     function renderMenuColorPicker(label) {
       menu.innerHTML = '';
+      menu.dataset.view = 'tags';
 
       const heading = document.createElement('div');
       heading.className = 'card-menu-color-heading';
@@ -552,16 +555,36 @@
 
     renderMenuRoot();
 
-    menuBtn.onclick = (e) => {
-      e.stopPropagation();
+    // Открывает меню в нужном виде ('root' — ⋯, 'tags' — список тегов).
+    // Повторный клик по той же кнопке закрывает меню, клик по другой —
+    // переключает вид, не закрывая.
+    function toggleMenu(view) {
       const isOpen = menu.classList.contains('open');
+      const sameView = menu.dataset.view === view;
       document.querySelectorAll('.card-menu.open').forEach(m => m.classList.remove('open'));
-      if (!isOpen) {
+      if (isOpen && sameView) {
         renderMenuRoot();
-        menu.classList.add('open');
+        return;
       }
+      if (view === 'tags') {
+        renderMenuTag();
+      } else {
+        renderMenuRoot();
+      }
+      menu.classList.add('open');
+    }
+
+    tagBtn.onclick = (e) => {
+      e.stopPropagation();
+      toggleMenu('tags');
     };
 
+    menuBtn.onclick = (e) => {
+      e.stopPropagation();
+      toggleMenu('root');
+    };
+
+    menuWrapper.appendChild(tagBtn);
     menuWrapper.appendChild(menuBtn);
     menuWrapper.appendChild(menu);
 
