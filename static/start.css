@@ -13,7 +13,7 @@
   --primary-bg: #ffffff;
   --primary-fg: #1c1c1e;
   --shadow-card: 0px 4px 12px 0px rgba(0, 0, 0, 0.4);
-  --font: 'Roobert PRO', -apple-system, BlinkMacSystemFont, 'Noto Sans', sans-serif;
+  --font: 'Nunito', -apple-system, BlinkMacSystemFont, 'Noto Sans', sans-serif;
 }
 
 :root[data-theme="light"] {

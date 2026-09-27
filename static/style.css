@@ -25,7 +25,7 @@
     --shadow-card: 0px 4px 12px 0px rgba(0, 0, 0, 0.4);
     --shadow-modal: 0px 16px 48px -8px rgba(0, 0, 0, 0.5);
     --shadow-mockup: 0px 12px 32px -4px rgba(0, 0, 0, 0.5);
-    --font: 'Roobert PRO', -apple-system, BlinkMacSystemFont, 'Noto Sans', sans-serif;
+    --font: 'Nunito', -apple-system, BlinkMacSystemFont, 'Noto Sans', sans-serif;
   }
 
   :root[data-theme="light"] {
