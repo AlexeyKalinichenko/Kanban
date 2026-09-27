@@ -16,7 +16,23 @@
   let draggedCardEl = null;
   let draggedColumnEl = null;
 
-  const dotColors = ['#ff9f7c', '#ffd76c', '#6cff9f', '#7c8cff', '#ff7ce0', '#7cf0ff'];
+  const dotColors = ['#ff9999', '#0fbcb0', '#4262ff', '#00b473', '#5b76fe', '#fcb900'];
+
+  // SVG-иконки интерфейса (дизайн-система «Like Miro»: без эмодзи и символов-заглушек)
+  const svg = (paths, size, extra) =>
+    '<svg width="' + (size || 16) + '" height="' + (size || 16) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (extra || '') + '>' + paths + '</svg>';
+  const ICONS = {
+    close: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
+    closeSmall: svg('<path d="M6 6l12 12M18 6L6 18"/>', 14),
+    plus: svg('<path d="M12 5v14M5 12h14"/>'),
+    plusLarge: svg('<path d="M12 5v14M5 12h14"/>', 18),
+    plusSmall: svg('<path d="M12 5v14M5 12h14"/>', 14),
+    check: svg('<path d="M5 12l5 5 9-10"/>', 16, ' class="card-menu-check" stroke-width="2.2"'),
+    chevronRight: svg('<path d="M9 6l6 6-6 6"/>', 14, ' class="card-menu-chevron"'),
+    chevronLeft: svg('<path d="M15 6l-6 6 6 6"/>', 14),
+    dots: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>',
+    grip: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>'
+  };
 
   const board = document.getElementById('board');
 
@@ -31,25 +47,34 @@
   }
 
   const PRIORITIES = {
-    critical: { label: 'Критический', className: 'priority-critical' },
-    medium:   { label: 'Средний',     className: 'priority-medium' },
-    minor:    { label: 'Минорный',    className: 'priority-minor' }
+    critical: { label: 'Критический', className: 'priority-critical', bg: '#ffc6c6', fg: '#600000' },
+    medium:   { label: 'Средний',     className: 'priority-medium',   bg: '#c3faf5', fg: '#187574' },
+    minor:    { label: 'Минорный',    className: 'priority-minor',    bg: '#e0e2e8', fg: '#555a6a' }
   };
   const DEFAULT_PRIORITY = 'medium';
 
   // Палитра из 10 возможных цветов для тегов (первые 4 — цвета тегов по умолчанию).
+  // Цвета взяты из дизайн-системы «Like Miro»: пастельный фон + тёмный текст.
+  // Ключи не менялись — старые файлы досок открываются без миграции.
   const PALETTE = [
-    { key: 'red',    name: 'красный',     bg: '#e0454f', text: '#ffffff' },
-    { key: 'green',  name: 'зеленый',     bg: '#43b56a', text: '#ffffff' },
-    { key: 'yellow', name: 'желтый',      bg: '#d4a72c', text: '#2b2205' },
-    { key: 'blue',   name: 'синий',       bg: '#4c7cf0', text: '#ffffff' },
-    { key: 'gray',   name: 'серый',       bg: '#6b7280', text: '#ffffff' },
-    { key: 'brown',  name: 'коричневый',  bg: '#8a5a3b', text: '#ffffff' },
-    { key: 'purple', name: 'фиолетовый',  bg: '#8b5cf6', text: '#ffffff' },
-    { key: 'cyan',   name: 'голубой',     bg: '#22b8cf', text: '#ffffff' },
-    { key: 'pink',   name: 'розовый',     bg: '#ec4899', text: '#ffffff' },
-    { key: 'lime',   name: 'салатовый',   bg: '#84cc16', text: '#1a2e05' }
+    { key: 'red',    name: 'красный',     bg: '#ffc6c6', text: '#600000' },
+    { key: 'green',  name: 'зеленый',     bg: '#c3faf5', text: '#187574' },
+    { key: 'yellow', name: 'желтый',      bg: '#fff4c4', text: '#746019' },
+    { key: 'blue',   name: 'синий',       bg: '#4262ff', text: '#ffffff' },
+    { key: 'gray',   name: 'серый',       bg: '#e0e2e8', text: '#555a6a' },
+    { key: 'brown',  name: 'коричневый',  bg: '#ffe6cd', text: '#600000' },
+    { key: 'purple', name: 'фиолетовый',  bg: '#f5f3ff', text: '#2a41b6' },
+    { key: 'cyan',   name: 'голубой',     bg: '#0fbcb0', text: '#1c1c1e' },
+    { key: 'pink',   name: 'розовый',     bg: '#ffd8f4', text: '#600000' },
+    { key: 'lime',   name: 'салатовый',   bg: '#00b473', text: '#1c1c1e' }
   ];
+
+  // Кружок цвета в меню: пастельная заливка + тонкий контур цветом текста,
+  // чтобы светлые цвета не терялись на белом фоне меню.
+  function styleSwatch(swatchEl, bg, fg) {
+    swatchEl.style.background = bg;
+    swatchEl.style.boxShadow = 'inset 0 0 0 1px ' + fg;
+  }
 
   function getPaletteEntry(colorKey) {
     return PALETTE.find(p => p.key === colorKey) || PALETTE[0];
@@ -96,7 +121,7 @@
   // Перерисовывает бейджи тегов конкретной карточки на основе el.dataset.tags
   // и текущего состояния tagRegistry (теги, удалённые из реестра, пропадают).
   function refreshCardTags(cardEl) {
-    const container = cardEl.querySelector(':scope > .card-tags');
+    const container = cardEl.querySelector('.card-tags');
     if (!container) return;
     container.innerHTML = '';
     const keys = (cardEl.dataset.tags || '').split(',').filter(Boolean);
@@ -163,19 +188,46 @@
   // Хранится как обычный символ внутри текста карточки (сохраняется в конфиг
   // вместе с остальным текстом), поэтому его так же можно удалить/
   // скопировать/вставить как букву.
+  //
+  // Каждая строка оборачивается в span.card-line (первая — .card-line-title,
+  // отмеченный пункт чек-листа — .card-line-done), а переводы строк остаются
+  // обычными текстовыми узлами — поэтому container.textContent по-прежнему
+  // равен исходному тексту карточки (на этом держатся редактирование и сохранение).
   function renderCardText(container, text) {
     container.innerHTML = '';
     let buffer = '';
     const chars = Array.from(text);
+    let lineEl = null;
+    let lineIndex = 0;
+    let atLineStart = true;
+
+    function startLine(firstChar) {
+      lineEl = document.createElement('span');
+      let cls = 'card-line';
+      if (firstChar === CHECKBOX_ON) cls += ' card-line-done';
+      else if (lineIndex === 0 && firstChar !== CHECKBOX_OFF) cls += ' card-line-title';
+      lineEl.className = cls;
+      container.appendChild(lineEl);
+      atLineStart = false;
+    }
 
     function flushBuffer() {
       if (buffer) {
-        container.appendChild(document.createTextNode(buffer));
+        lineEl.appendChild(document.createTextNode(buffer));
         buffer = '';
       }
     }
 
     chars.forEach((ch, idx) => {
+      if (ch === '\n') {
+        if (atLineStart) startLine('');
+        flushBuffer();
+        container.appendChild(document.createTextNode('\n'));
+        lineIndex++;
+        atLineStart = true;
+        return;
+      }
+      if (atLineStart) startLine(ch);
       if (ch === CHECKBOX_OFF || ch === CHECKBOX_ON) {
         flushBuffer();
         const cb = document.createElement('span');
@@ -189,12 +241,12 @@
           renderCardText(container, current.join(''));
           saveBoard();
         });
-        container.appendChild(cb);
+        lineEl.appendChild(cb);
       } else {
         buffer += ch;
       }
     });
-    flushBuffer();
+    if (lineEl) flushBuffer();
   }
 
   function createCardElement(text, priority, initialTags) {
@@ -288,9 +340,11 @@
     });
 
     const delBtn = document.createElement('button');
+    delBtn.type = 'button';
     delBtn.className = 'card-delete';
-    delBtn.innerHTML = '&times;';
+    delBtn.innerHTML = ICONS.close;
     delBtn.title = 'Удалить карточку';
+    delBtn.setAttribute('aria-label', 'Удалить карточку');
     delBtn.onclick = () => {
       const col = el.closest('.column');
       el.remove();
@@ -303,9 +357,11 @@
     menuWrapper.className = 'card-menu-wrapper';
 
     const menuBtn = document.createElement('button');
+    menuBtn.type = 'button';
     menuBtn.className = 'card-menu-btn';
-    menuBtn.innerHTML = '&#8943;'; // ⋯
+    menuBtn.innerHTML = ICONS.dots;
     menuBtn.title = 'Меню карточки';
+    menuBtn.setAttribute('aria-label', 'Меню карточки');
 
     const menu = document.createElement('div');
     menu.className = 'card-menu';
@@ -321,7 +377,7 @@
       const priorityItem = document.createElement('button');
       priorityItem.type = 'button';
       priorityItem.className = 'card-menu-item';
-      priorityItem.textContent = 'Приоритет';
+      priorityItem.innerHTML = '<span class="card-menu-item-label">Приоритет</span>' + ICONS.chevronRight;
       priorityItem.onclick = (e) => {
         e.stopPropagation();
         renderMenuPriority();
@@ -331,7 +387,7 @@
       const tagItem = document.createElement('button');
       tagItem.type = 'button';
       tagItem.className = 'card-menu-item';
-      tagItem.textContent = 'Теги';
+      tagItem.innerHTML = '<span class="card-menu-item-label">Теги</span>' + ICONS.chevronRight;
       tagItem.onclick = (e) => {
         e.stopPropagation();
         renderMenuTag();
@@ -362,8 +418,17 @@
         const opt = document.createElement('button');
         opt.type = 'button';
         opt.className = 'card-menu-item card-menu-priority-option';
-        if (key === el.dataset.priority) opt.classList.add('active');
-        opt.textContent = PRIORITIES[key].label;
+        const isActive = key === el.dataset.priority;
+        if (isActive) opt.classList.add('active');
+        const pSwatch = document.createElement('span');
+        pSwatch.className = 'card-menu-tag-swatch';
+        styleSwatch(pSwatch, PRIORITIES[key].bg, PRIORITIES[key].fg);
+        const pLabel = document.createElement('span');
+        pLabel.className = 'card-menu-item-label';
+        pLabel.textContent = PRIORITIES[key].label;
+        opt.appendChild(pSwatch);
+        opt.appendChild(pLabel);
+        if (isActive) opt.insertAdjacentHTML('beforeend', ICONS.check);
         opt.onclick = (e) => {
           e.stopPropagation();
           el.className = 'card ' + PRIORITIES[key].className;
@@ -388,14 +453,21 @@
         const opt = document.createElement('button');
         opt.type = 'button';
         opt.className = 'card-menu-item card-menu-priority-option card-menu-tag-toggle';
-        if (currentKeys.has(def.key)) opt.classList.add('active');
+        const tagActive = currentKeys.has(def.key);
+        if (tagActive) opt.classList.add('active');
 
         const swatch = document.createElement('span');
         swatch.className = 'card-menu-tag-swatch';
-        swatch.style.background = getPaletteEntry(def.color).bg;
+        const pe = getPaletteEntry(def.color);
+        styleSwatch(swatch, pe.bg, pe.text);
+
+        const tLabel = document.createElement('span');
+        tLabel.className = 'card-menu-item-label';
+        tLabel.textContent = def.label;
 
         opt.appendChild(swatch);
-        opt.appendChild(document.createTextNode(def.label));
+        opt.appendChild(tLabel);
+        if (tagActive) opt.insertAdjacentHTML('beforeend', ICONS.check);
         opt.onclick = (e) => {
           e.stopPropagation();
           toggleCardTag(el, def.key);
@@ -405,7 +477,8 @@
         const deleteTagBtn = document.createElement('button');
         deleteTagBtn.type = 'button';
         deleteTagBtn.className = 'card-menu-tag-delete';
-        deleteTagBtn.innerHTML = '&times;';
+        deleteTagBtn.innerHTML = ICONS.closeSmall;
+        deleteTagBtn.setAttribute('aria-label', 'Удалить тег «' + def.label + '» из списка');
         deleteTagBtn.title = 'Удалить тег из списка (снимется со всех карточек)';
         deleteTagBtn.onclick = (e) => {
           e.stopPropagation();
@@ -420,10 +493,14 @@
         menu.appendChild(row);
       });
 
+      const sep = document.createElement('div');
+      sep.className = 'card-menu-sep';
+      menu.appendChild(sep);
+
       const newTagBtn = document.createElement('button');
       newTagBtn.type = 'button';
       newTagBtn.className = 'card-menu-item card-menu-new-tag-btn';
-      newTagBtn.textContent = '+ Новый';
+      newTagBtn.innerHTML = ICONS.plusSmall + '<span>Новый тег</span>';
       newTagBtn.onclick = (e) => {
         e.stopPropagation();
         const name = prompt('Название нового тега:', '');
@@ -443,30 +520,29 @@
       heading.textContent = 'Цвет для «' + label + '»';
       menu.appendChild(heading);
 
+      const grid = document.createElement('div');
+      grid.className = 'card-menu-color-grid';
       PALETTE.forEach(p => {
         const opt = document.createElement('button');
         opt.type = 'button';
-        opt.className = 'card-menu-item card-menu-priority-option';
-
-        const swatch = document.createElement('span');
-        swatch.className = 'card-menu-tag-swatch';
-        swatch.style.background = p.bg;
-
-        opt.appendChild(swatch);
-        opt.appendChild(document.createTextNode(p.name));
+        opt.className = 'card-menu-color-swatch';
+        opt.style.background = p.bg;
+        opt.title = p.name;
+        opt.setAttribute('aria-label', p.name);
         opt.onclick = (e) => {
           e.stopPropagation();
           createTagDefinition(label, p.key);
           saveBoard();
           renderMenuTag();
         };
-        menu.appendChild(opt);
+        grid.appendChild(opt);
       });
+      menu.appendChild(grid);
 
       const backBtn = document.createElement('button');
       backBtn.type = 'button';
       backBtn.className = 'card-menu-item card-menu-color-back';
-      backBtn.textContent = '← Назад';
+      backBtn.innerHTML = ICONS.chevronLeft + '<span>Назад</span>';
       backBtn.onclick = (e) => {
         e.stopPropagation();
         renderMenuTag();
@@ -494,25 +570,35 @@
     actions.appendChild(menuWrapper);
     actions.appendChild(delBtn);
 
-    el.appendChild(badge);
+    // Верхняя строка карточки: бейдж приоритета и теги слева, кнопки ⋯ и × справа
+    const head = document.createElement('div');
+    head.className = 'card-head';
+    const labels = document.createElement('div');
+    labels.className = 'card-labels';
+    labels.appendChild(badge);
 
     // --- Теги карточки (можно повесить несколько, реестр общий для доски) ---
     const tagsContainer = document.createElement('div');
     tagsContainer.className = 'card-tags';
     tagsContainer.style.display = 'none';
-    el.appendChild(tagsContainer);
+    labels.appendChild(tagsContainer);
+
+    head.appendChild(labels);
+    head.appendChild(actions);
+    el.appendChild(head);
 
     el.dataset.tags = (initialTags || []).join(',');
     refreshCardTags(el);
 
     el.appendChild(textEl);
-    el.appendChild(actions);
 
     el.addEventListener('dragstart', (e) => {
       e.stopPropagation(); // не даём событию всплыть до столбца и запустить его drag
       draggedCardEl = el;
-      el.classList.add('dragging');
       e.dataTransfer.effectAllowed = 'move';
+      // класс ставим на следующем тике: браузер уже снял изображение карточки
+      // для курсора, а на её месте остаётся пунктирная «ячейка»
+      setTimeout(() => { if (draggedCardEl === el) el.classList.add('dragging'); }, 0);
     });
 
     el.addEventListener('dragend', (e) => {
@@ -637,7 +723,7 @@
 
     const dragHandle = document.createElement('span');
     dragHandle.className = 'column-drag-handle';
-    dragHandle.innerHTML = '&#8942;&#8942;';
+    dragHandle.innerHTML = ICONS.grip;
     dragHandle.title = 'Перетащить столбец';
 
     const dot = document.createElement('span');
@@ -663,9 +749,11 @@
     countEl.textContent = '0';
 
     const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
     deleteBtn.className = 'column-delete';
-    deleteBtn.innerHTML = '&times;';
+    deleteBtn.innerHTML = ICONS.close;
     deleteBtn.title = 'Удалить столбец';
+    deleteBtn.setAttribute('aria-label', 'Удалить столбец');
     deleteBtn.onclick = () => {
       const cardsCount = columnEl.querySelectorAll('.card').length;
       if (cardsCount > 0) {
@@ -713,7 +801,9 @@
     const addBtn = document.createElement('button');
     addBtn.type = 'submit';
     addBtn.className = 'add-btn';
-    addBtn.textContent = '+';
+    addBtn.innerHTML = ICONS.plusLarge;
+    addBtn.title = 'Добавить карточку';
+    addBtn.setAttribute('aria-label', 'Добавить карточку');
 
     row.appendChild(textarea);
     row.appendChild(addBtn);
@@ -749,7 +839,7 @@
   const addColumnBtn = document.createElement('button');
   addColumnBtn.type = 'button';
   addColumnBtn.className = 'add-column';
-  addColumnBtn.innerHTML = '+ Добавить столбец';
+  addColumnBtn.innerHTML = ICONS.plus + '<span>Добавить столбец</span>';
   addColumnBtn.onclick = () => {
     const name = prompt('Название нового столбца:', 'Новый столбец');
     if (name === null) return;
