@@ -30,8 +30,9 @@
     check: svg('<path d="M5 12l5 5 9-10"/>', 16, ' class="card-menu-check" stroke-width="2.2"'),
     chevronRight: svg('<path d="M9 6l6 6-6 6"/>', 14, ' class="card-menu-chevron"'),
     chevronLeft: svg('<path d="M15 6l-6 6 6 6"/>', 14),
+    chevronDown: svg('<path d="M6 9l6 6 6-6"/>', 12, ' class="card-priority-chevron" stroke-width="2.5"'),
     tag: svg('<path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/>'),
-    dots: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>',
+    checkbox: svg('<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M8 12.5l3 3 5-6"/>'),
     grip: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>'
   };
 
@@ -261,14 +262,19 @@
     el.id = id;
     el.dataset.priority = priority;
 
-    const badge = document.createElement('div');
+    // Плашка приоритета — это и кнопка: по клику под ней открывается
+    // список приоритетов (см. «Меню приоритета» ниже).
+    const badge = document.createElement('button');
+    badge.type = 'button';
     badge.className = 'card-priority-badge';
+    badge.title = 'Сменить приоритет';
     const badgeDot = document.createElement('span');
     badgeDot.className = 'dot';
     const badgeLabel = document.createElement('span');
     badgeLabel.textContent = info.label;
     badge.appendChild(badgeDot);
     badge.appendChild(badgeLabel);
+    badge.insertAdjacentHTML('beforeend', ICONS.chevronDown);
 
     const textEl = document.createElement('div');
     textEl.className = 'card-text';
@@ -353,18 +359,27 @@
       saveBoard();
     };
 
-    // --- Меню карточки: кнопка тегов (открывает сразу список тегов)
-    // и кнопка ⋯ (приоритет, чекбокс). Обе открывают один и тот же выпадающий
-    // список, поэтому лежат в общей обёртке .card-menu-wrapper ---
+    // --- Кнопка «Чекбокс»: добавляет пустой чекбокс в конец текста карточки.
+    // Символ чекбокса — обычный символ текста: его можно удалить/скопировать/
+    // вставить как букву; сохраняется на сервере как часть текста карточки.
+    const checkboxBtn = document.createElement('button');
+    checkboxBtn.type = 'button';
+    checkboxBtn.className = 'card-menu-btn card-checkbox-btn';
+    checkboxBtn.innerHTML = ICONS.checkbox;
+    checkboxBtn.title = 'Добавить чекбокс';
+    checkboxBtn.setAttribute('aria-label', 'Добавить чекбокс');
+    checkboxBtn.onclick = (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.card-menu.open').forEach(m => m.classList.remove('open'));
+      const current = textEl.textContent;
+      const separator = current === '' || current.endsWith('\n') ? '' : '\n';
+      renderCardText(textEl, current + separator + CHECKBOX_OFF);
+      saveBoard();
+    };
+
+    // --- Меню тегов: кнопка с ярлыком открывает список тегов ---
     const menuWrapper = document.createElement('div');
     menuWrapper.className = 'card-menu-wrapper';
-
-    const menuBtn = document.createElement('button');
-    menuBtn.type = 'button';
-    menuBtn.className = 'card-menu-btn';
-    menuBtn.innerHTML = ICONS.dots;
-    menuBtn.title = 'Меню карточки';
-    menuBtn.setAttribute('aria-label', 'Меню карточки');
 
     const tagBtn = document.createElement('button');
     tagBtn.type = 'button';
@@ -376,75 +391,8 @@
     const menu = document.createElement('div');
     menu.className = 'card-menu';
 
-    function closeMenu() {
-      menu.classList.remove('open');
-      renderMenuRoot();
-    }
-
-    function renderMenuRoot() {
-      menu.innerHTML = '';
-      menu.dataset.view = 'root';
-
-      const priorityItem = document.createElement('button');
-      priorityItem.type = 'button';
-      priorityItem.className = 'card-menu-item';
-      priorityItem.innerHTML = '<span class="card-menu-item-label">Приоритет</span>' + ICONS.chevronRight;
-      priorityItem.onclick = (e) => {
-        e.stopPropagation();
-        renderMenuPriority();
-      };
-      menu.appendChild(priorityItem);
-
-      const checkboxItem = document.createElement('button');
-      checkboxItem.type = 'button';
-      checkboxItem.className = 'card-menu-item';
-      checkboxItem.textContent = 'Чекбокс';
-      checkboxItem.onclick = (e) => {
-        e.stopPropagation();
-        // символ чекбокса добавляется в конец текста как обычный символ —
-        // его можно удалить/скопировать/вставить как букву; сохраняется
-        // на сервере как часть текста карточки.
-        const current = textEl.textContent;
-        const separator = current === '' || current.endsWith('\n') ? '' : '\n';
-        renderCardText(textEl, current + separator + CHECKBOX_OFF);
-        closeMenu();
-        saveBoard();
-      };
-      menu.appendChild(checkboxItem);
-    }
-
-    function renderMenuPriority() {
-      menu.innerHTML = '';
-      Object.keys(PRIORITIES).forEach(key => {
-        const opt = document.createElement('button');
-        opt.type = 'button';
-        opt.className = 'card-menu-item card-menu-priority-option';
-        const isActive = key === el.dataset.priority;
-        if (isActive) opt.classList.add('active');
-        const pSwatch = document.createElement('span');
-        pSwatch.className = 'card-menu-tag-swatch';
-        styleSwatch(pSwatch, PRIORITIES[key].bg, PRIORITIES[key].fg);
-        const pLabel = document.createElement('span');
-        pLabel.className = 'card-menu-item-label';
-        pLabel.textContent = PRIORITIES[key].label;
-        opt.appendChild(pSwatch);
-        opt.appendChild(pLabel);
-        if (isActive) opt.insertAdjacentHTML('beforeend', ICONS.check);
-        opt.onclick = (e) => {
-          e.stopPropagation();
-          el.className = 'card ' + PRIORITIES[key].className;
-          el.dataset.priority = key;
-          badgeLabel.textContent = PRIORITIES[key].label;
-          closeMenu();
-          saveBoard();
-        };
-        menu.appendChild(opt);
-      });
-    }
-
     function renderMenuTag() {
       menu.innerHTML = '';
-      menu.dataset.view = 'tags';
 
       const currentKeys = new Set((el.dataset.tags || '').split(',').filter(Boolean));
 
@@ -516,7 +464,6 @@
 
     function renderMenuColorPicker(label) {
       menu.innerHTML = '';
-      menu.dataset.view = 'tags';
 
       const heading = document.createElement('div');
       heading.className = 'card-menu-color-heading';
@@ -553,52 +500,83 @@
       menu.appendChild(backBtn);
     }
 
-    renderMenuRoot();
-
-    // Открывает меню в нужном виде ('root' — ⋯, 'tags' — список тегов).
-    // Повторный клик по той же кнопке закрывает меню, клик по другой —
-    // переключает вид, не закрывая.
-    function toggleMenu(view) {
-      const isOpen = menu.classList.contains('open');
-      const sameView = menu.dataset.view === view;
-      document.querySelectorAll('.card-menu.open').forEach(m => m.classList.remove('open'));
-      if (isOpen && sameView) {
-        renderMenuRoot();
-        return;
-      }
-      if (view === 'tags') {
-        renderMenuTag();
-      } else {
-        renderMenuRoot();
-      }
-      menu.classList.add('open');
-    }
-
+    // Повторный клик по кнопке тегов закрывает список
     tagBtn.onclick = (e) => {
       e.stopPropagation();
-      toggleMenu('tags');
-    };
-
-    menuBtn.onclick = (e) => {
-      e.stopPropagation();
-      toggleMenu('root');
+      const isOpen = menu.classList.contains('open');
+      document.querySelectorAll('.card-menu.open').forEach(m => m.classList.remove('open'));
+      if (!isOpen) {
+        renderMenuTag();
+        menu.classList.add('open');
+      }
     };
 
     menuWrapper.appendChild(tagBtn);
-    menuWrapper.appendChild(menuBtn);
     menuWrapper.appendChild(menu);
 
+    // Кнопки справа в шапке карточки: теги, чекбокс, удалить
     const actions = document.createElement('div');
     actions.className = 'card-actions';
     actions.appendChild(menuWrapper);
+    actions.appendChild(checkboxBtn);
     actions.appendChild(delBtn);
+
+    // --- Меню приоритета: открывается кликом по самой плашке приоритета ---
+    const priorityWrapper = document.createElement('div');
+    priorityWrapper.className = 'card-menu-wrapper card-priority-wrapper';
+
+    const priorityMenu = document.createElement('div');
+    priorityMenu.className = 'card-menu card-priority-menu';
+
+    function renderPriorityMenu() {
+      priorityMenu.innerHTML = '';
+      Object.keys(PRIORITIES).forEach(key => {
+        const opt = document.createElement('button');
+        opt.type = 'button';
+        opt.className = 'card-menu-item card-menu-priority-option';
+        const isActive = key === el.dataset.priority;
+        if (isActive) opt.classList.add('active');
+        const pSwatch = document.createElement('span');
+        pSwatch.className = 'card-menu-tag-swatch';
+        styleSwatch(pSwatch, PRIORITIES[key].bg, PRIORITIES[key].fg);
+        const pLabel = document.createElement('span');
+        pLabel.className = 'card-menu-item-label';
+        pLabel.textContent = PRIORITIES[key].label;
+        opt.appendChild(pSwatch);
+        opt.appendChild(pLabel);
+        if (isActive) opt.insertAdjacentHTML('beforeend', ICONS.check);
+        opt.onclick = (e) => {
+          e.stopPropagation();
+          priorityMenu.classList.remove('open');
+          if (key === el.dataset.priority) return;
+          el.className = 'card ' + PRIORITIES[key].className;
+          el.dataset.priority = key;
+          badgeLabel.textContent = PRIORITIES[key].label;
+          saveBoard();
+        };
+        priorityMenu.appendChild(opt);
+      });
+    }
+
+    badge.onclick = (e) => {
+      e.stopPropagation();
+      const isOpen = priorityMenu.classList.contains('open');
+      document.querySelectorAll('.card-menu.open').forEach(m => m.classList.remove('open'));
+      if (!isOpen) {
+        renderPriorityMenu();
+        priorityMenu.classList.add('open');
+      }
+    };
+
+    priorityWrapper.appendChild(badge);
+    priorityWrapper.appendChild(priorityMenu);
 
     // Верхняя строка карточки: бейдж приоритета и теги слева, кнопки ⋯ и × справа
     const head = document.createElement('div');
     head.className = 'card-head';
     const labels = document.createElement('div');
     labels.className = 'card-labels';
-    labels.appendChild(badge);
+    labels.appendChild(priorityWrapper);
 
     // --- Теги карточки (можно повесить несколько, реестр общий для доски) ---
     const tagsContainer = document.createElement('div');
