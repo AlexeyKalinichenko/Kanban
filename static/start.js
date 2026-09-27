@@ -7,12 +7,20 @@ const boardsGrid = document.getElementById('boards-grid');
 // --- Переключатель темы ---
 const themeToggleBtn = document.getElementById('theme-toggle');
 
-function themeButtonLabel(theme) {
-  return theme === 'dark' ? '☀️ Светлая тема' : '🌙 Тёмная тема';
-}
+const ICONS = {
+  sun: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+  moon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
+  close: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  plus: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>'
+};
+
+// Цвета точек-столбцов на плитке — те же, что у точек в заголовках столбцов доски
+const COLUMN_DOT_COLORS = ['#ff9999', '#0fbcb0', '#4262ff', '#00b473', '#5b76fe', '#fcb900'];
 
 function updateThemeButton() {
-  themeToggleBtn.textContent = themeButtonLabel(window.KanbanTheme.getTheme());
+  const isDark = window.KanbanTheme.getTheme() === 'dark';
+  themeToggleBtn.innerHTML = (isDark ? ICONS.sun : ICONS.moon) +
+    '<span>' + (isDark ? 'Светлая тема' : 'Тёмная тема') + '</span>';
 }
 
 themeToggleBtn.addEventListener('click', () => {
@@ -35,7 +43,7 @@ function createAddTile() {
   const tile = document.createElement('button');
   tile.type = 'button';
   tile.className = 'add-board-tile';
-  tile.innerHTML = '+ Создать доску';
+  tile.innerHTML = '<span class="add-board-pill">' + ICONS.plus + 'Создать доску</span>';
   tile.addEventListener('click', async () => {
     const name = prompt('Название новой доски:', 'Новая доска');
     if (name === null) return;
@@ -68,13 +76,24 @@ function createBoardTile(board) {
 
   const meta = document.createElement('div');
   meta.className = 'board-tile-meta';
-  meta.textContent = `${board.columns_count} ${wordForColumns(board.columns_count)}`;
+  const dotsCount = Math.min(board.columns_count, COLUMN_DOT_COLORS.length);
+  for (let i = 0; i < dotsCount; i++) {
+    const dot = document.createElement('span');
+    dot.className = 'board-tile-dot';
+    dot.style.background = COLUMN_DOT_COLORS[i];
+    meta.appendChild(dot);
+  }
+  const metaText = document.createElement('span');
+  metaText.className = 'board-tile-meta-text';
+  metaText.textContent = `${board.columns_count} ${wordForColumns(board.columns_count)}`;
+  meta.appendChild(metaText);
 
   const deleteBtn = document.createElement('button');
   deleteBtn.type = 'button';
   deleteBtn.className = 'board-tile-delete';
-  deleteBtn.innerHTML = '&times;';
+  deleteBtn.innerHTML = ICONS.close;
   deleteBtn.title = 'Удалить доску';
+  deleteBtn.setAttribute('aria-label', 'Удалить доску');
   deleteBtn.addEventListener('click', async (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -89,8 +108,12 @@ function createBoardTile(board) {
     }
   });
 
-  tile.appendChild(deleteBtn);
-  tile.appendChild(title);
+  const head = document.createElement('div');
+  head.className = 'board-tile-head';
+  head.appendChild(title);
+  head.appendChild(deleteBtn);
+
+  tile.appendChild(head);
   tile.appendChild(meta);
   return tile;
 }
