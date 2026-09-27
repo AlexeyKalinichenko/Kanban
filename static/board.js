@@ -867,7 +867,8 @@
       });
       columns.push({ title, cards });
     });
-    return { title: boardTitleInput.value, columns, tagDefs: tagRegistry };
+    const background = window.KanbanBoardBg ? window.KanbanBoardBg.get() : '';
+    return { title: boardTitleInput.value, background, columns, tagDefs: tagRegistry };
   }
 
   function saveBoard() {
@@ -893,6 +894,10 @@
       if (data.title) {
         boardTitleInput.value = data.title;
       }
+      // цвет фона доски (пустая строка — обычный фон)
+      if (window.KanbanBoardBg) {
+        window.KanbanBoardBg.apply(data.background || '');
+      }
       // реестр тегов доски — важно установить ДО отрисовки карточек,
       // чтобы бейджи тегов сразу отрисовались с правильными цветами/названиями
       if (Array.isArray(data.tagDefs)) {
@@ -909,6 +914,11 @@
   }
 
   boardTitleInput.addEventListener('change', () => saveBoard());
+
+  // смена цвета фона в палитре — сохраняем доску
+  if (window.KanbanBoardBg) {
+    window.KanbanBoardBg.onChange(() => saveBoard());
+  }
 
   if (BOARD_ID) {
     loadBoard();

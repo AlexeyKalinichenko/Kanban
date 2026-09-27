@@ -48,6 +48,7 @@ def board_file_path(board_id: str) -> str:
 #
 #   # Kanban board data file
 #   TITLE: Название доски
+#   BACKGROUND: blue
 #
 #   TAGDEFS
 #   TAGDEF key=yellow color=yellow label=желтый
@@ -68,6 +69,7 @@ def board_file_path(board_id: str) -> str:
 #   COLUMN: Следующий столбец
 #   ENDCOLUMN
 #
+# Строка BACKGROUND необязательна: если её нет — у доски обычный фон.
 # Пустые строки и строки, начинающиеся с "#", вне блока CARD игнорируются.
 # ---------------------------------------------------------------------------
 
@@ -81,6 +83,15 @@ PALETTE_KEYS = {
     "brown", "purple", "cyan", "pink", "lime",
 }
 DEFAULT_PALETTE_KEY = "gray"
+
+# Цвета фона доски (совпадают со списком в static/board-bg.js).
+# Пустая строка — обычный фон (по умолчанию).
+BACKGROUND_KEYS = {"blue", "green", "purple", "red", "yellow"}
+
+
+def normalize_background(value) -> str:
+    value = str(value or "").strip().lower()
+    return value if value in BACKGROUND_KEYS else ""
 
 # Теги, с которыми стартует новая доска (если явного блока TAGDEFS в файле
 # ещё нет, для обратной совместимости используется этот же список).
@@ -98,8 +109,9 @@ KEY_TOKEN_RE = re.compile(r"^[\w-]+$")
 
 def parse_board(text: str) -> dict:
     """Разбирает содержимое файла доски в структуру
-    {"title": ..., "columns": [...], "tagDefs": [...]}."""
+    {"title": ..., "background": ..., "columns": [...], "tagDefs": [...]}."""
     board_title = DEFAULT_BOARD_TITLE
+    background = ""
     columns = []
     current_column = None
     card_lines = None
@@ -151,6 +163,8 @@ def parse_board(text: str) -> dict:
             in_tagdefs = True
         elif stripped.startswith("TITLE:"):
             board_title = stripped[len("TITLE:"):].strip() or DEFAULT_BOARD_TITLE
+        elif stripped.startswith("BACKGROUND:"):
+            background = normalize_background(stripped[len("BACKGROUND:"):])
         elif stripped.startswith("COLUMN:"):
             title = stripped[len("COLUMN:"):].strip()
             current_column = {"title": title, "cards": []}
@@ -187,13 +201,19 @@ def parse_board(text: str) -> dict:
     if tag_defs is None:
         tag_defs = [dict(t) for t in DEFAULT_TAG_DEFS]
 
-    return {"title": board_title, "columns": columns, "tagDefs": tag_defs}
+    return {
+        "title": board_title,
+        "background": background,
+        "columns": columns,
+        "tagDefs": tag_defs,
+    }
 
 
 def serialize_board(data: dict) -> str:
-    """Собирает структуру {"title": ..., "columns": [...], "tagDefs": [...]}
+    """Собирает структуру {"title": ..., "background": ..., "columns": [...], "tagDefs": [...]}
     обратно в текст файла доски."""
     board_title = str(data.get("title", "") or "").replace("\n", " ").strip() or DEFAULT_BOARD_TITLE
+    background = normalize_background(data.get("background"))
 
     raw_defs = data.get("tagDefs")
     if raw_defs is None:
@@ -215,10 +235,15 @@ def serialize_board(data: dict) -> str:
     lines = [
         "# Kanban board data file",
         "# Формат: TITLE: <название доски>",
+        "#         BACKGROUND: <blue|green|purple|red|yellow> (необязательно, без строки — обычный фон)",
         "#         TAGDEFS ... TAGDEF key=<ключ> color=<цвет> label=<название> ... ENDTAGDEFS",
         "#         COLUMN: <название> ... CARD priority=<critical|medium|minor> [tags=<ключ1,ключ2,...>] текст ENDCARD ... ENDCOLUMN",
         "#         Доступные цвета: red, green, yellow, blue, gray, brown, purple, cyan, pink, lime",
         f"TITLE: {board_title}",
+    ]
+    if background:
+        lines.append(f"BACKGROUND: {background}")
+    lines += [
         "",
         "TAGDEFS",
     ]
@@ -308,11 +333,15 @@ def list_boards():
         boards.append({
             "id": board_id,
             "title": data.get("title") or DEFAULT_BOARD_TITLE,
+            "background": data.get("background") or "",
             "columns_count": len(data.get("columns", [])),
         })
 
     boards.sort(key=lambda b: b["title"].lower())
-    return jsonify({"boards": boards})
+    response = jsonify({"boards": boards})
+    # список досок всегда должен быть свежим (не из кэша браузера)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/api/boards", methods=["POST"])

@@ -230,3 +230,22 @@ svg { display: block; flex-shrink: 0; }
 .theme-toggle-btn:hover {
   background: var(--hover);
 }
+
+/* Плитка доски в цвете фона этой доски — те же оттенки, что и фон
+   на странице доски (см. static/style.css): глубокие в тёмной теме,
+   пастельные в светлой. */
+.board-tile[data-bg="blue"]   { background: #1b2a4e; }
+.board-tile[data-bg="green"]  { background: #163a2b; }
+.board-tile[data-bg="purple"] { background: #2e2150; }
+.board-tile[data-bg="red"]    { background: #45201f; }
+.board-tile[data-bg="yellow"] { background: #3d3413; }
+
+:root[data-theme="light"] .board-tile[data-bg="blue"]   { background: #dce6ff; }
+:root[data-theme="light"] .board-tile[data-bg="green"]  { background: #d5f3e2; }
+:root[data-theme="light"] .board-tile[data-bg="purple"] { background: #e8defe; }
+:root[data-theme="light"] .board-tile[data-bg="red"]    { background: #ffdcda; }
+:root[data-theme="light"] .board-tile[data-bg="yellow"] { background: #fff1bf; }
+
+.board-tile[data-bg] {
+  border-color: transparent;
+}

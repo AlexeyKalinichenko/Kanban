@@ -69,6 +69,10 @@ function createBoardTile(board) {
   const tile = document.createElement('a');
   tile.className = 'board-tile';
   tile.href = `/board/${board.id}`;
+  // плитка окрашивается в цвет фона доски (если он задан)
+  if (board.background) {
+    tile.dataset.bg = board.background;
+  }
 
   const title = document.createElement('div');
   title.className = 'board-tile-title';
@@ -151,3 +155,12 @@ async function loadBoards() {
 }
 
 loadBoards();
+
+// При возврате на стартовую страницу кнопкой браузера «Назад» страница может
+// быть показана из кэша (bfcache) со старыми плитками — например, без нового
+// цвета фона доски. В этом случае перезагружаем её, чтобы данные были свежими.
+window.addEventListener('pageshow', (e) => {
+  if (e.persisted) {
+    window.location.reload();
+  }
+});
