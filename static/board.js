@@ -143,6 +143,8 @@
 
     const pill = document.createElement('span');
     pill.className = 'card-tag';
+    // тег без названия — просто цветная плашка
+    if (!def.label) pill.classList.add('card-tag-no-label');
     pill.style.background = swatch.bg;
     pill.style.color = swatch.text;
 
@@ -413,7 +415,12 @@
 
         const tLabel = document.createElement('span');
         tLabel.className = 'card-menu-item-label';
-        tLabel.textContent = def.label;
+        if (def.label) {
+          tLabel.textContent = def.label;
+        } else {
+          tLabel.textContent = 'без названия';
+          tLabel.classList.add('card-menu-item-label-empty');
+        }
 
         opt.appendChild(swatch);
         opt.appendChild(tLabel);
@@ -428,12 +435,11 @@
         deleteTagBtn.type = 'button';
         deleteTagBtn.className = 'card-menu-tag-delete';
         deleteTagBtn.innerHTML = ICONS.closeSmall;
-        deleteTagBtn.setAttribute('aria-label', 'Удалить тег «' + def.label + '» из списка');
+        const tagName = def.label ? '«' + def.label + '»' : 'без названия';
+        deleteTagBtn.setAttribute('aria-label', 'Удалить тег ' + tagName + ' из списка');
         deleteTagBtn.title = 'Удалить тег из списка (снимется со всех карточек)';
         deleteTagBtn.onclick = (e) => {
           e.stopPropagation();
-          const ok = confirm('Удалить тег «' + def.label + '» из списка? Он будет снят со всех карточек.');
-          if (!ok) return;
           deleteTagDefinition(def.key);
           renderMenuTag();
         };
@@ -453,22 +459,42 @@
       newTagBtn.innerHTML = ICONS.plusSmall + '<span>Новый тег</span>';
       newTagBtn.onclick = (e) => {
         e.stopPropagation();
-        const name = prompt('Название нового тега:', '');
-        if (name === null) return; // отмена
-        const label = name.trim();
-        if (!label) return; // без названия тег не создаём
-        renderMenuColorPicker(label);
+        renderMenuColorPicker();
       };
       menu.appendChild(newTagBtn);
     }
 
-    function renderMenuColorPicker(label) {
+    // Создание нового тега: поле для названия + выбор цвета.
+    // Тег создаётся кликом по цвету; пустое название — тег без текста.
+    function renderMenuColorPicker() {
       menu.innerHTML = '';
 
       const heading = document.createElement('div');
       heading.className = 'card-menu-color-heading';
-      heading.textContent = 'Цвет для «' + label + '»';
+      heading.textContent = 'Новый тег';
       menu.appendChild(heading);
+
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.className = 'card-menu-tag-name-input';
+      nameInput.placeholder = 'Название';
+      nameInput.maxLength = 40;
+      nameInput.setAttribute('aria-label', 'Название нового тега');
+      nameInput.addEventListener('click', (e) => e.stopPropagation());
+      nameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          renderMenuTag();
+        } else if (e.key === 'Enter') {
+          e.preventDefault(); // тег создаётся выбором цвета
+        }
+      });
+      menu.appendChild(nameInput);
+
+      const colorHeading = document.createElement('div');
+      colorHeading.className = 'card-menu-color-heading';
+      colorHeading.textContent = 'Цвет';
+      menu.appendChild(colorHeading);
 
       const grid = document.createElement('div');
       grid.className = 'card-menu-color-grid';
@@ -481,7 +507,7 @@
         opt.setAttribute('aria-label', p.name);
         opt.onclick = (e) => {
           e.stopPropagation();
-          createTagDefinition(label, p.key);
+          createTagDefinition(nameInput.value.trim(), p.key);
           saveBoard();
           renderMenuTag();
         };
@@ -498,6 +524,8 @@
         renderMenuTag();
       };
       menu.appendChild(backBtn);
+
+      nameInput.focus();
     }
 
     // Повторный клик по кнопке тегов закрывает список
@@ -782,17 +810,6 @@
     const row = document.createElement('div');
     row.className = 'add-form-row';
 
-    const prioritySelect = document.createElement('select');
-    prioritySelect.className = 'priority-select';
-    prioritySelect.title = 'Приоритет карточки';
-    Object.keys(PRIORITIES).forEach(key => {
-      const opt = document.createElement('option');
-      opt.value = key;
-      opt.textContent = PRIORITIES[key].label;
-      if (key === DEFAULT_PRIORITY) opt.selected = true;
-      prioritySelect.appendChild(opt);
-    });
-
     const textarea = document.createElement('textarea');
     textarea.className = 'add-input';
     textarea.rows = 1;
@@ -808,17 +825,17 @@
 
     row.appendChild(textarea);
     row.appendChild(addBtn);
-    form.appendChild(prioritySelect);
     form.appendChild(row);
 
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       const value = textarea.value.trim();
       if (!value) return;
-      cardsContainer.appendChild(createCardElement(value, prioritySelect.value));
+      // новая карточка всегда создаётся со средним приоритетом —
+      // сменить его можно кликом по плашке приоритета на карточке
+      cardsContainer.appendChild(createCardElement(value, DEFAULT_PRIORITY));
       textarea.value = '';
       textarea.style.height = 'auto';
-      prioritySelect.value = DEFAULT_PRIORITY;
       updateColumnCount(columnEl);
       saveBoard();
     });

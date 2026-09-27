@@ -20,7 +20,7 @@
 import os
 import re
 import uuid
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, Response, request, jsonify, send_from_directory
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -29,6 +29,35 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "Data")
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
+
+# Браузер не должен держать CSS/JS в кэше без проверки: в старых версиях Flask
+# по умолчанию разрешено кэшировать статику на 12 часов, и после правок
+# в браузере оставалось старое поведение.
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+STATIC_LINK_RE = re.compile(r'((?:src|href)="/static/)([^"?#]+)"')
+
+
+def render_page(filename: str) -> Response:
+    """Отдаёт HTML-страницу, дописывая к ссылкам на /static/... метку версии
+    (?v=<время изменения файла>). После любой правки CSS/JS ссылка меняется,
+    и браузер сразу загружает новую версию, а не берёт старую из кэша."""
+    with open(os.path.join(BASE_DIR, filename), "r", encoding="utf-8") as f:
+        html = f.read()
+
+    def add_version(match):
+        path = os.path.join(STATIC_DIR, match.group(2))
+        try:
+            version = int(os.path.getmtime(path))
+        except OSError:
+            return match.group(0)
+        return f'{match.group(1)}{match.group(2)}?v={version}"'
+
+    html = STATIC_LINK_RE.sub(add_version, html)
+    response = Response(html, mimetype="text/html")
+    response.headers["Cache-Control"] = "no-cache"
+    return response
 
 UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -301,12 +330,12 @@ def migrate_legacy_file():
 
 @app.route("/")
 def index():
-    return send_from_directory(BASE_DIR, "index.html")
+    return render_page("index.html")
 
 
 @app.route("/board/<board_id>")
 def board_page(board_id):
-    return send_from_directory(BASE_DIR, "board.html")
+    return render_page("board.html")
 
 
 # ---------------------------------------------------------------------------

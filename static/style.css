@@ -623,19 +623,6 @@
     align-items: flex-end;
   }
 
-  .priority-select {
-    background: var(--input-bg);
-    border: 1px solid var(--secondary-border);
-    color: var(--text);
-    border-radius: 8px;
-    height: 36px;
-    padding: 0 10px;
-    font-size: 14px;
-    font-family: inherit;
-    cursor: pointer;
-    width: 100%;
-  }
-
   .add-input {
     flex: 1;
     min-height: 44px;
@@ -654,7 +641,6 @@
     color: var(--icon);
   }
 
-  .priority-select:focus,
   .add-input:focus {
     outline: none;
     border-color: var(--link);
@@ -877,4 +863,43 @@
   .card-priority-menu {
     left: 0;
     right: auto;
+  }
+
+  /* ---------- Создание тега: поле названия, теги без текста ---------- */
+
+  .card-menu-tag-name-input {
+    display: block;
+    width: calc(100% - 24px);
+    margin: 4px 12px 4px;
+    height: 36px;
+    padding: 0 10px;
+    background: var(--input-bg);
+    border: 1px solid var(--secondary-border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .card-menu-tag-name-input::placeholder {
+    color: var(--icon);
+  }
+
+  .card-menu-tag-name-input:focus {
+    outline: none;
+    border-color: var(--link);
+    box-shadow: 0 0 0 1px var(--link);
+  }
+
+  .card-menu-item-label-empty {
+    color: var(--text2);
+    font-style: italic;
+  }
+
+  /* тег без названия — короткая цветная плашка той же высоты */
+  .card-tag.card-tag-no-label {
+    min-width: 28px;
+    min-height: 21px;
+    justify-content: center;
   }
