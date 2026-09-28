@@ -200,6 +200,8 @@
   // редактируется он при этом как обычный символ (textContent/value
   // остаются простой строкой, span — только для отображения).
   const CHECKBOX_OFF = '☐';
+  // маркер пункта списка: жирная точка + пробел (обычные символы текста)
+  const LIST_BULLET = '• ';
   const CHECKBOX_ON = '☑';
 
   // Символ чекбокса в тексте карточки отображается крупнее обычного текста
@@ -344,9 +346,9 @@
         return btn;
       }
 
-      // TODO: обработчики «Жирный» и «Список» — пока кнопки без действия
+      // TODO: обработчик «Жирный» — пока кнопка без действия
       makeTool('<span aria-hidden="true">B</span>', 'Жирный', null, 'card-edit-tool-bold');
-      makeTool(ICONS.list, 'Список', null);
+      makeTool(ICONS.list, 'Список', () => insertBulletAtCursor());
       makeTool(ICONS.checkbox, 'Добавить чекбокс', () => insertCheckboxAtCursor());
       editWrap.appendChild(editArea);
       editWrap.appendChild(toolbar);
@@ -363,16 +365,25 @@
       resize();
       editArea.addEventListener('input', resize);
 
-      // Символ чекбокса — обычный символ текста: его можно удалить/скопировать/
-      // вставить как букву; сохраняется на сервере как часть текста карточки.
-      // Если курсор не в начале строки — чекбокс ставится с новой строки.
+      // Чекбокс и точка списка — обычные символы текста: их можно удалить/
+      // скопировать/вставить как буквы; сохраняются на сервере как часть текста.
+      // Маркер вставляется в место курсора; если курсор не в начале строки —
+      // маркер ставится с новой строки.
       function insertCheckboxAtCursor() {
+        insertMarkerAtCursor(CHECKBOX_OFF);
+      }
+
+      function insertBulletAtCursor() {
+        insertMarkerAtCursor(LIST_BULLET);
+      }
+
+      function insertMarkerAtCursor(marker) {
         const value = editArea.value;
         const start = editArea.selectionStart;
         const end = editArea.selectionEnd;
         const lineStart = value.lastIndexOf('\n', start - 1) + 1;
         const atLineStart = value.slice(lineStart, start).trim() === '';
-        const insertion = (atLineStart ? '' : '\n') + CHECKBOX_OFF;
+        const insertion = (atLineStart ? '' : '\n') + marker;
         editArea.value = value.slice(0, start) + insertion + value.slice(end);
         const newPos = start + insertion.length;
         editArea.focus();
@@ -403,15 +414,21 @@
           e.preventDefault();
           finishEdit(false);
         } else if (e.key === 'Enter') {
-          // если в текущей строке есть чекбокс — продолжаем список:
-          // на новую строку тоже добавляем пустой чекбокс
+          // если в текущей строке есть чекбокс или она начинается с точки
+          // списка — продолжаем список: новая строка начинается с того же маркера
           const pos = editArea.selectionStart;
           const value = editArea.value;
           const lineStart = value.lastIndexOf('\n', pos - 1) + 1;
           const currentLine = value.slice(lineStart, pos);
+          let marker = '';
           if (currentLine.includes(CHECKBOX_OFF) || currentLine.includes(CHECKBOX_ON)) {
+            marker = CHECKBOX_OFF;
+          } else if (currentLine.trimStart().startsWith(LIST_BULLET.trim())) {
+            marker = LIST_BULLET;
+          }
+          if (marker) {
             e.preventDefault();
-            const insertion = '\n' + CHECKBOX_OFF;
+            const insertion = '\n' + marker;
             const before = value.slice(0, pos);
             const after = value.slice(editArea.selectionEnd);
             editArea.value = before + insertion + after;
