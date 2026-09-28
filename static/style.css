@@ -903,3 +903,40 @@
     min-height: 21px;
     justify-content: center;
   }
+
+  /* ---------- Панель редактора текста карточки ---------- */
+
+  .card-edit-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 6px;
+  }
+
+  .card-edit-tool {
+    width: 32px;
+    height: 32px;
+    border-radius: 9999px;
+    /* такая же синяя обводка, как у поля редактора (.card-text-edit) */
+    border: 2px solid var(--link);
+    background: var(--panel);
+    color: var(--icon);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: background 0.18s ease, color 0.18s ease;
+  }
+
+  .card-edit-tool:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+
+  .card-edit-tool-bold {
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 800;
+    line-height: 1;
+  }

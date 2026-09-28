@@ -32,6 +32,7 @@
     chevronLeft: svg('<path d="M15 6l-6 6 6 6"/>', 14),
     chevronDown: svg('<path d="M6 9l6 6 6-6"/>', 12, ' class="card-priority-chevron" stroke-width="2.5"'),
     tag: svg('<path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/>'),
+    list: svg('<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none"/>'),
     checkbox: svg('<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M8 12.5l3 3 5-6"/>'),
     grip: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>'
   };
@@ -297,16 +298,61 @@
     renderCardText(textEl, text);
     textEl.title = 'Двойной клик — редактировать';
 
+    // Двойной клик по тексту браузер по умолчанию превращает в выделение слова
+    // (синяя подсветка успевала мелькнуть перед открытием редактора, особенно
+    // в Safari). Отменяем выделение на втором нажатии — редактор при этом
+    // открывается как обычно.
+    textEl.addEventListener('mousedown', (e) => {
+      if (e.detail >= 2) e.preventDefault();
+    });
+
     // --- Редактирование текста карточки по двойному клику ---
     textEl.addEventListener('dblclick', () => {
+      // на всякий случай снимаем выделение, если браузер всё же его поставил
+      const selection = window.getSelection && window.getSelection();
+      if (selection) selection.removeAllRanges();
+
       const originalText = textEl.textContent;
 
       const editArea = document.createElement('textarea');
       editArea.className = 'card-text-edit';
       editArea.value = originalText;
 
+      // Панель редактора под полем ввода — видна только во время редактирования:
+      // «Жирный», «Список», «Чекбокс» (вставляет пустой чекбокс в место курсора).
+      const editWrap = document.createElement('div');
+      editWrap.className = 'card-edit-wrap';
+      const toolbar = document.createElement('div');
+      toolbar.className = 'card-edit-toolbar';
+
+      function makeTool(html, label, onClick, extraClass) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'card-edit-tool' + (extraClass ? ' ' + extraClass : '');
+        btn.innerHTML = html;
+        btn.title = label;
+        btn.setAttribute('aria-label', label);
+        btn.tabIndex = -1;
+        // mousedown с preventDefault — чтобы поле ввода не теряло фокус
+        // (иначе сработал бы blur и редактор закрылся бы)
+        btn.addEventListener('mousedown', (e) => e.preventDefault());
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (onClick) onClick();
+        });
+        toolbar.appendChild(btn);
+        return btn;
+      }
+
+      // TODO: обработчики «Жирный» и «Список» — пока кнопки без действия
+      makeTool('<span aria-hidden="true">B</span>', 'Жирный', null, 'card-edit-tool-bold');
+      makeTool(ICONS.list, 'Список', null);
+      makeTool(ICONS.checkbox, 'Добавить чекбокс', () => insertCheckboxAtCursor());
+      editWrap.appendChild(editArea);
+      editWrap.appendChild(toolbar);
+
       el.draggable = false; // не мешаем drag'ом выделению текста при редактировании
-      textEl.replaceWith(editArea);
+      textEl.replaceWith(editWrap);
       editArea.focus();
       editArea.setSelectionRange(editArea.value.length, editArea.value.length);
 
@@ -317,6 +363,23 @@
       resize();
       editArea.addEventListener('input', resize);
 
+      // Символ чекбокса — обычный символ текста: его можно удалить/скопировать/
+      // вставить как букву; сохраняется на сервере как часть текста карточки.
+      // Если курсор не в начале строки — чекбокс ставится с новой строки.
+      function insertCheckboxAtCursor() {
+        const value = editArea.value;
+        const start = editArea.selectionStart;
+        const end = editArea.selectionEnd;
+        const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+        const atLineStart = value.slice(lineStart, start).trim() === '';
+        const insertion = (atLineStart ? '' : '\n') + CHECKBOX_OFF;
+        editArea.value = value.slice(0, start) + insertion + value.slice(end);
+        const newPos = start + insertion.length;
+        editArea.focus();
+        editArea.setSelectionRange(newPos, newPos);
+        resize();
+      }
+
       let finished = false;
       function finishEdit(save) {
         if (finished) return;
@@ -325,7 +388,7 @@
           const newText = editArea.value.trim();
           renderCardText(textEl, newText || originalText);
         }
-        editArea.replaceWith(textEl);
+        editWrap.replaceWith(textEl);
         el.draggable = true;
         if (save && textEl.textContent !== originalText) {
           saveBoard();
@@ -385,24 +448,6 @@
       const col = el.closest('.column');
       el.remove();
       if (col) updateColumnCount(col);
-      saveBoard();
-    };
-
-    // --- Кнопка «Чекбокс»: добавляет пустой чекбокс в конец текста карточки.
-    // Символ чекбокса — обычный символ текста: его можно удалить/скопировать/
-    // вставить как букву; сохраняется на сервере как часть текста карточки.
-    const checkboxBtn = document.createElement('button');
-    checkboxBtn.type = 'button';
-    checkboxBtn.className = 'card-menu-btn card-checkbox-btn';
-    checkboxBtn.innerHTML = ICONS.checkbox;
-    checkboxBtn.title = 'Добавить чекбокс';
-    checkboxBtn.setAttribute('aria-label', 'Добавить чекбокс');
-    checkboxBtn.onclick = (e) => {
-      e.stopPropagation();
-      document.querySelectorAll('.card-menu.open').forEach(m => m.classList.remove('open'));
-      const current = textEl.textContent;
-      const separator = current === '' || current.endsWith('\n') ? '' : '\n';
-      renderCardText(textEl, current + separator + CHECKBOX_OFF);
       saveBoard();
     };
 
@@ -569,11 +614,10 @@
     menuWrapper.appendChild(tagBtn);
     menuWrapper.appendChild(menu);
 
-    // Кнопки справа в шапке карточки: теги, чекбокс, удалить
+    // Кнопки справа в шапке карточки: теги, удалить
     const actions = document.createElement('div');
     actions.className = 'card-actions';
     actions.appendChild(menuWrapper);
-    actions.appendChild(checkboxBtn);
     actions.appendChild(delBtn);
 
     // --- Меню приоритета: открывается кликом по самой плашке приоритета ---
