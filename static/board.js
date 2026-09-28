@@ -38,6 +38,20 @@
 
   const board = document.getElementById('board');
 
+  // --- Окно подтверждения в стиле доски (вместо системного confirm) ---
+  // Само окно — в общем модуле static/dialog.js.
+  function showConfirmDialog(options) {
+    return window.KanbanDialog.confirm(options);
+  }
+
+  function wordForCards(count) {
+    const mod10 = count % 10;
+    const mod100 = count % 100;
+    if (mod10 === 1 && mod100 !== 11) return 'карточка';
+    if ([2, 3, 4].includes(mod10) && ![12, 13, 14].includes(mod100)) return 'карточки';
+    return 'карточек';
+  }
+
   function nextDotColor() {
     return dotColors[(columnIdCounter - 1) % dotColors.length];
   }
@@ -354,7 +368,20 @@
     delBtn.innerHTML = ICONS.close;
     delBtn.title = 'Удалить карточку';
     delBtn.setAttribute('aria-label', 'Удалить карточку');
-    delBtn.onclick = () => {
+    delBtn.onclick = async (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.card-menu.open').forEach(m => m.classList.remove('open'));
+      // в окне показываем первую строку карточки (без символов чекбоксов),
+      // чтобы было понятно, какая карточка удаляется
+      const firstLine = (textEl.textContent.split('\n').find(l => l.trim()) || '')
+        .replace(/[☐☑]/g, '').trim();
+      const shortTitle = firstLine.length > 60 ? firstLine.slice(0, 57).trimEnd() + '…' : firstLine;
+      const ok = await showConfirmDialog({
+        title: 'Удалить карточку?',
+        message: shortTitle ? '«' + shortTitle + '» будет удалена.' : 'Карточка будет удалена.',
+        confirmLabel: 'Удалить'
+      });
+      if (!ok) return;
       const col = el.closest('.column');
       el.remove();
       if (col) updateColumnCount(col);
@@ -783,10 +810,16 @@
     deleteBtn.innerHTML = ICONS.close;
     deleteBtn.title = 'Удалить столбец';
     deleteBtn.setAttribute('aria-label', 'Удалить столбец');
-    deleteBtn.onclick = () => {
+    deleteBtn.onclick = async () => {
       const cardsCount = columnEl.querySelectorAll('.card').length;
       if (cardsCount > 0) {
-        const ok = confirm('В столбце "' + titleInput.value + '" есть карточки (' + cardsCount + '). Удалить столбец вместе с ними?');
+        const name = titleInput.value.trim() || 'Без названия';
+        const ok = await showConfirmDialog({
+          title: 'Удалить столбец «' + name + '»?',
+          message: 'В столбце ' + cardsCount + ' ' + wordForCards(cardsCount) +
+            '. Они будут удалены вместе со столбцом.',
+          confirmLabel: 'Удалить'
+        });
         if (!ok) return;
       }
       columnEl.remove();
@@ -858,13 +891,16 @@
   addColumnBtn.type = 'button';
   addColumnBtn.className = 'add-column';
   addColumnBtn.innerHTML = ICONS.plus + '<span>Добавить столбец</span>';
+  // Новый столбец создаётся сразу, без диалога. Название выделяется,
+  // чтобы его можно было тут же перепечатать (сохранится по Enter или уходу из поля).
   addColumnBtn.onclick = () => {
-    const name = prompt('Название нового столбца:', 'Новый столбец');
-    if (name === null) return;
-    const trimmed = name.trim() || 'Новый столбец';
-    const columnEl = createColumn(trimmed, []);
+    const columnEl = createColumn('Новый столбец', []);
     board.insertBefore(columnEl, addColumnBtn);
     saveBoard();
+    columnEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    const titleInput = columnEl.querySelector('.column-title-input');
+    titleInput.focus({ preventScroll: true });
+    titleInput.select();
   };
 
   board.appendChild(addColumnBtn);

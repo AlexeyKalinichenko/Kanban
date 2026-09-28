@@ -249,3 +249,21 @@ svg { display: block; flex-shrink: 0; }
 .board-tile[data-bg] {
   border-color: transparent;
 }
+
+/* Перетаскивание плиток досок */
+.board-tile[draggable="true"] {
+  -webkit-user-drag: element;
+}
+
+/* место, откуда взята плитка при перетаскивании */
+.board-tile.dragging {
+  /* !important — перебить цветной фон плиток (data-bg) */
+  background: transparent !important;
+  border: 1.5px dashed var(--dashed) !important;
+  box-shadow: none;
+  transform: none;
+}
+
+.board-tile.dragging > * {
+  visibility: hidden;
+}

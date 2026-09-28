@@ -45,7 +45,13 @@ function createAddTile() {
   tile.className = 'add-board-tile';
   tile.innerHTML = '<span class="add-board-pill">' + ICONS.plus + 'Создать доску</span>';
   tile.addEventListener('click', async () => {
-    const name = prompt('Название новой доски:', 'Новая доска');
+    const name = await window.KanbanDialog.prompt({
+      title: 'Новая доска',
+      value: 'Новая доска',
+      placeholder: 'Название доски',
+      confirmLabel: 'Создать',
+      maxLength: 60
+    });
     if (name === null) return;
     const title = name.trim() || 'Новая доска';
     try {
@@ -69,6 +75,8 @@ function createBoardTile(board) {
   const tile = document.createElement('a');
   tile.className = 'board-tile';
   tile.href = `/board/${board.id}`;
+  tile.dataset.id = board.id;
+  tile.draggable = true;
   // плитка окрашивается в цвет фона доски (если он задан)
   if (board.background) {
     tile.dataset.bg = board.background;
@@ -101,7 +109,11 @@ function createBoardTile(board) {
   deleteBtn.addEventListener('click', async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    const ok = confirm(`Удалить доску «${board.title}»? Это действие нельзя отменить.`);
+    const ok = await window.KanbanDialog.confirm({
+      title: `Удалить доску «${board.title}»?`,
+      message: 'Все столбцы и карточки этой доски будут удалены. Это действие нельзя отменить.',
+      confirmLabel: 'Удалить'
+    });
     if (!ok) return;
     try {
       await fetch(`/api/boards/${board.id}`, { method: 'DELETE' });
@@ -155,6 +167,62 @@ async function loadBoards() {
 }
 
 loadBoards();
+
+// --- Перетаскивание плиток досок (меняет порядок, сохраняется на сервере) ---
+let draggedTile = null;
+let orderBeforeDrag = '';
+
+function currentOrder() {
+  return [...boardsGrid.querySelectorAll('.board-tile')].map(t => t.dataset.id);
+}
+
+boardsGrid.addEventListener('dragstart', (e) => {
+  const tile = e.target.closest && e.target.closest('.board-tile');
+  if (!tile) return;
+  draggedTile = tile;
+  orderBeforeDrag = currentOrder().join(',');
+  e.dataTransfer.effectAllowed = 'move';
+  // без данных Safari/Firefox могут не начать перетаскивание
+  e.dataTransfer.setData('text/plain', tile.dataset.id);
+  // класс на следующем тике: браузер уже снял «картинку» плитки для курсора
+  setTimeout(() => { if (draggedTile === tile) tile.classList.add('dragging'); }, 0);
+});
+
+boardsGrid.addEventListener('dragover', (e) => {
+  if (!draggedTile) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  const target = e.target.closest && e.target.closest('.board-tile, .add-board-tile');
+  if (!target || target === draggedTile) return;
+  if (target.classList.contains('add-board-tile')) {
+    // плитка «Создать доску» всегда последняя — ставим перед ней
+    boardsGrid.insertBefore(draggedTile, target);
+    return;
+  }
+  const rect = target.getBoundingClientRect();
+  const before = e.clientX < rect.left + rect.width / 2;
+  const ref = before ? target : target.nextSibling;
+  if (ref !== draggedTile) {
+    boardsGrid.insertBefore(draggedTile, ref);
+  }
+});
+
+boardsGrid.addEventListener('drop', (e) => {
+  if (draggedTile) e.preventDefault();
+});
+
+boardsGrid.addEventListener('dragend', () => {
+  if (!draggedTile) return;
+  draggedTile.classList.remove('dragging');
+  draggedTile = null;
+  const ids = currentOrder();
+  if (ids.join(',') === orderBeforeDrag) return; // порядок не изменился
+  fetch('/api/boards/order', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids })
+  }).catch(err => console.error('Не удалось сохранить порядок досок:', err));
+});
 
 // При возврате на стартовую страницу кнопкой браузера «Назад» страница может
 // быть показана из кэша (bfcache) со старыми плитками — например, без нового

@@ -10,6 +10,7 @@
 - GET    /api/boards            — список всех досок (id + название)
 - POST   /api/boards             — создать новую доску, возвращает её id
 - DELETE /api/boards/<id>        — удалить доску (удаляет файл)
+- POST   /api/boards/order       — сохранить порядок досок на стартовой странице
 - GET    /api/board/<id>         — прочитать содержимое доски
 - POST   /api/board/<id>         — сохранить (перезаписать) содержимое доски
 
@@ -20,6 +21,7 @@
 import os
 import re
 import uuid
+from datetime import datetime
 from flask import Flask, Response, request, jsonify, send_from_directory
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -72,11 +74,42 @@ def board_file_path(board_id: str) -> str:
     return os.path.join(DATA_DIR, f"{board_id}.txt")
 
 
+# Порядок досок на стартовой странице (меняется перетаскиванием плиток).
+# Хранится отдельным файлом: по одному id доски на строку, сверху вниз =
+# слева направо. Имя файла — не GUID, поэтому в список досок он не попадает.
+ORDER_FILE = os.path.join(DATA_DIR, "boards-order.txt")
+
+
+def read_board_order() -> list:
+    try:
+        with open(ORDER_FILE, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return []
+    return [l.strip() for l in lines if is_valid_board_id(l.strip())]
+
+
+def write_board_order(ids: list) -> None:
+    seen = set()
+    clean = []
+    for board_id in ids:
+        board_id = str(board_id or "").strip()
+        if is_valid_board_id(board_id) and board_id not in seen:
+            seen.add(board_id)
+            clean.append(board_id)
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(ORDER_FILE, "w", encoding="utf-8") as f:
+        f.write("# Порядок досок на стартовой странице: по одному id доски на строку\n")
+        for board_id in clean:
+            f.write(board_id + "\n")
+
+
 # ---------------------------------------------------------------------------
 # Формат текстового файла одной доски (человекочитаемый, с явными границами блоков):
 #
 #   # Kanban board data file
 #   TITLE: Название доски
+#   CREATED: 2026-09-28T08:20:00
 #   BACKGROUND: blue
 #
 #   TAGDEFS
@@ -99,6 +132,8 @@ def board_file_path(board_id: str) -> str:
 #   ENDCOLUMN
 #
 # Строка BACKGROUND необязательна: если её нет — у доски обычный фон.
+# Строка CREATED — дата создания доски; по ней доски упорядочены на стартовой
+# странице (новые — в конце). У досок, созданных до её появления, строки нет.
 # Пустые строки и строки, начинающиеся с "#", вне блока CARD игнорируются.
 # ---------------------------------------------------------------------------
 
@@ -116,6 +151,15 @@ DEFAULT_PALETTE_KEY = "gray"
 # Цвета фона доски (совпадают со списком в static/board-bg.js).
 # Пустая строка — обычный фон (по умолчанию).
 BACKGROUND_KEYS = {"blue", "green", "purple", "red", "yellow"}
+
+
+def normalize_created(value) -> str:
+    """Дата создания доски в формате ISO (2026-09-28T08:20:00) или пустая строка."""
+    value = str(value or "").strip()
+    try:
+        return datetime.fromisoformat(value).isoformat(timespec="seconds")
+    except ValueError:
+        return ""
 
 
 def normalize_background(value) -> str:
@@ -141,6 +185,7 @@ def parse_board(text: str) -> dict:
     {"title": ..., "background": ..., "columns": [...], "tagDefs": [...]}."""
     board_title = DEFAULT_BOARD_TITLE
     background = ""
+    created = ""
     columns = []
     current_column = None
     card_lines = None
@@ -192,6 +237,8 @@ def parse_board(text: str) -> dict:
             in_tagdefs = True
         elif stripped.startswith("TITLE:"):
             board_title = stripped[len("TITLE:"):].strip() or DEFAULT_BOARD_TITLE
+        elif stripped.startswith("CREATED:"):
+            created = normalize_created(stripped[len("CREATED:"):])
         elif stripped.startswith("BACKGROUND:"):
             background = normalize_background(stripped[len("BACKGROUND:"):])
         elif stripped.startswith("COLUMN:"):
@@ -233,6 +280,7 @@ def parse_board(text: str) -> dict:
     return {
         "title": board_title,
         "background": background,
+        "created": created,
         "columns": columns,
         "tagDefs": tag_defs,
     }
@@ -243,6 +291,7 @@ def serialize_board(data: dict) -> str:
     обратно в текст файла доски."""
     board_title = str(data.get("title", "") or "").replace("\n", " ").strip() or DEFAULT_BOARD_TITLE
     background = normalize_background(data.get("background"))
+    created = normalize_created(data.get("created"))
 
     raw_defs = data.get("tagDefs")
     if raw_defs is None:
@@ -264,12 +313,15 @@ def serialize_board(data: dict) -> str:
     lines = [
         "# Kanban board data file",
         "# Формат: TITLE: <название доски>",
+        "#         CREATED: <дата создания> (порядок досок на стартовой странице)",
         "#         BACKGROUND: <blue|green|purple|red|yellow> (необязательно, без строки — обычный фон)",
         "#         TAGDEFS ... TAGDEF key=<ключ> color=<цвет> label=<название> ... ENDTAGDEFS",
         "#         COLUMN: <название> ... CARD priority=<critical|medium|minor> [tags=<ключ1,ключ2,...>] текст ENDCARD ... ENDCOLUMN",
         "#         Доступные цвета: red, green, yellow, blue, gray, brown, purple, cyan, pink, lime",
         f"TITLE: {board_title}",
     ]
+    if created:
+        lines.append(f"CREATED: {created}")
     if background:
         lines.append(f"BACKGROUND: {background}")
     lines += [
@@ -364,9 +416,21 @@ def list_boards():
             "title": data.get("title") or DEFAULT_BOARD_TITLE,
             "background": data.get("background") or "",
             "columns_count": len(data.get("columns", [])),
+            "_created": data.get("created") or "",
         })
 
-    boards.sort(key=lambda b: b["title"].lower())
+    # Порядок досок по умолчанию: сначала старые доски без даты создания
+    # (по алфавиту), затем доски с датой создания — от старых к новым.
+    boards.sort(key=lambda b: (b["_created"] != "", b["_created"], b["title"].lower()))
+    for b in boards:
+        del b["_created"]
+
+    # Если порядок уже задан перетаскиванием — доски из файла порядка идут
+    # первыми в сохранённом порядке, остальные (например, только что
+    # созданные) — после них, в порядке по умолчанию.
+    order = {board_id: i for i, board_id in enumerate(read_board_order())}
+    if order:
+        boards.sort(key=lambda b: (0, order[b["id"]]) if b["id"] in order else (1, 0))
     response = jsonify({"boards": boards})
     # список досок всегда должен быть свежим (не из кэша браузера)
     response.headers["Cache-Control"] = "no-store"
@@ -380,9 +444,15 @@ def create_board():
 
     os.makedirs(DATA_DIR, exist_ok=True)
     board_id = str(uuid.uuid4())
-    text = serialize_board({"title": title, "columns": []})
+    created = datetime.now().isoformat(timespec="seconds")
+    text = serialize_board({"title": title, "created": created, "columns": []})
     with open(board_file_path(board_id), "w", encoding="utf-8") as f:
         f.write(text)
+
+    # новая доска всегда добавляется в конец списка
+    order = read_board_order()
+    if order:
+        write_board_order(order + [board_id])
 
     return jsonify({"id": board_id, "title": title})
 
@@ -394,6 +464,21 @@ def delete_board(board_id):
     path = board_file_path(board_id)
     if os.path.exists(path):
         os.remove(path)
+    order = read_board_order()
+    if board_id in order:
+        write_board_order([i for i in order if i != board_id])
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/boards/order", methods=["POST"])
+def save_boards_order():
+    payload = request.get_json(force=True, silent=True) or {}
+    ids = payload.get("ids")
+    if not isinstance(ids, list):
+        return jsonify({"error": "ids must be a list"}), 400
+    # сохраняем только существующие доски
+    ids = [i for i in ids if is_valid_board_id(str(i)) and os.path.exists(board_file_path(str(i)))]
+    write_board_order(ids)
     return jsonify({"status": "ok"})
 
 
@@ -423,8 +508,15 @@ def save_board(board_id):
         return jsonify({"error": "invalid id"}), 400
     payload = request.get_json(force=True, silent=True) or {}
     os.makedirs(DATA_DIR, exist_ok=True)
+    path = board_file_path(board_id)
+    # Дату создания хранит только сервер: браузер её не присылает,
+    # поэтому переносим её из текущего файла, чтобы она не терялась при сохранении.
+    payload["created"] = ""
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            payload["created"] = parse_board(f.read()).get("created", "")
     text = serialize_board(payload)
-    with open(board_file_path(board_id), "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(text)
     return jsonify({"status": "ok"})
 

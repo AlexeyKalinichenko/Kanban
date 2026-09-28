@@ -1,0 +1,134 @@
+/* Общие окна в стиле доски (static/dialog.js) — подключаются и на стартовой
+   странице, и на доске. Используют цветовые токены страницы (--panel, --text…);
+   где на стартовой странице токена нет — берётся значение по умолчанию. */
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+:root[data-theme="light"] .confirm-overlay {
+  background: rgba(28, 28, 30, 0.32);
+}
+
+.confirm-overlay.open {
+  opacity: 1;
+}
+
+.confirm-dialog {
+  width: min(400px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-modal, 0px 16px 48px -8px rgba(0, 0, 0, 0.5));
+  padding: 24px;
+  transform: translateY(8px) scale(0.98);
+  transition: transform 0.15s ease;
+}
+
+.confirm-overlay.open .confirm-dialog {
+  transform: none;
+}
+
+.confirm-title {
+  font-size: 18px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+  word-wrap: break-word;
+}
+
+.confirm-message {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text2);
+}
+
+.confirm-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.confirm-btn {
+  height: 40px;
+  padding: 0 20px;
+  border-radius: 9999px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s ease, opacity 0.18s ease;
+}
+
+.confirm-btn:focus-visible {
+  outline: 2px solid var(--link, #5b76fe);
+  outline-offset: 2px;
+}
+
+.confirm-btn-cancel {
+  background: transparent;
+  border: 1px solid var(--secondary-border);
+  color: var(--text);
+}
+
+.confirm-btn-cancel:hover {
+  background: var(--hover);
+}
+
+/* красная кнопка — опасное действие (удаление) */
+.confirm-btn-danger {
+  background: #e5484d;
+  border: 1px solid #e5484d;
+  color: #ffffff;
+}
+
+.confirm-btn-danger:hover {
+  opacity: 0.88;
+}
+
+.confirm-btn-primary {
+  background: var(--primary-bg);
+  border: 1px solid var(--primary-bg);
+  color: var(--primary-fg);
+}
+
+.confirm-btn-primary:hover {
+  opacity: 0.85;
+}
+
+.confirm-input {
+  display: block;
+  width: 100%;
+  height: 44px;
+  margin-top: 12px;
+  padding: 0 12px;
+  background: var(--input-bg, var(--page));
+  border: 1px solid var(--secondary-border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.confirm-input::placeholder {
+  color: var(--icon);
+}
+
+.confirm-input:focus {
+  outline: none;
+  border-color: var(--link, #5b76fe);
+  box-shadow: 0 0 0 1px var(--link, #5b76fe);
+}
