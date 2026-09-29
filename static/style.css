@@ -429,6 +429,7 @@
     font-size: 14px;
     line-height: 1.5;
     white-space: pre-wrap;
+    tab-size: 4;
     cursor: text;
   }
 
@@ -440,6 +441,10 @@
   /* отмеченный пункт чек-листа */
   .card-line-done {
     color: var(--text2);
+  }
+
+  /* зачёркивается только содержимое пункта, отступ перед ним — нет */
+  .card-line-done .card-line-body {
     text-decoration: line-through;
   }
 
@@ -475,6 +480,34 @@
     padding: 6px 8px;
     resize: none;
     outline: none;
+    /* поле с форматированием: переносы строк и пробелы как в тексте карточки */
+    white-space: pre-wrap;
+    tab-size: 4;
+    /* текст в редакторе выделяется мышью, а не перетаскивает карточку */
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-user-drag: none;
+    overflow-wrap: anywhere;
+    min-height: 37px;
+    cursor: text;
+  }
+
+  .card-text-edit b,
+  .card-text-edit strong,
+  .card-bold {
+    font-weight: 700;
+  }
+
+  /* кнопка «B», когда жирный шрифт включён */
+  .card-edit-tool.active {
+    background: var(--link);
+    color: #ffffff;
+  }
+
+  .card-edit-tool.active:hover {
+    background: var(--link);
+    color: #ffffff;
+    opacity: 0.88;
   }
 
   /* ---------- Меню карточки ---------- */
@@ -939,4 +972,26 @@
     font-size: 15px;
     font-weight: 800;
     line-height: 1;
+  }
+
+  /* ---------- Строки текста: отступ сохраняется при переносе ---------- */
+
+  :root {
+    /* ширина пробела шрифта карточек; уточняется из board.js */
+    --space-w: 0.26em;
+  }
+
+  /* каждая строка — отдельный блок; «висячий» отступ на ширину табов/пробелов
+     в начале строки, чтобы перенос длинной строки шёл под текстом */
+  .card-text .card-line,
+  .card-text-edit > div {
+    display: block;
+    min-height: 1.5em;
+    padding-left: calc(var(--indent, 0) * var(--space-w));
+    text-indent: calc(-1 * var(--indent, 0) * var(--space-w));
+  }
+
+  /* значок чекбокса — строчный блок: не наследует отрицательный text-indent строки */
+  .card-checkbox-char {
+    text-indent: 0;
   }
