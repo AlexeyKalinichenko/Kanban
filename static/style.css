@@ -483,10 +483,12 @@
     /* поле с форматированием: переносы строк и пробелы как в тексте карточки */
     white-space: pre-wrap;
     tab-size: 4;
-    /* текст в редакторе выделяется мышью, а не перетаскивает карточку */
+    /* текст в редакторе выделяется мышью, а не перетаскивает карточку
+       (перетаскивание на время редактирования выключается из board.js) */
     -webkit-user-select: text;
     user-select: text;
-    -webkit-user-drag: none;
+    /* явный цвет курсора — в цвет текста темы */
+    caret-color: var(--text);
     overflow-wrap: anywhere;
     min-height: 37px;
     cursor: text;
@@ -994,4 +996,10 @@
   /* значок чекбокса — строчный блок: не наследует отрицательный text-indent строки */
   .card-checkbox-char {
     text-indent: 0;
+  }
+
+  /* кнопка-карандаш подсвечена, пока открыт редактор текста карточки */
+  .card-edit-btn.active {
+    background: var(--hover);
+    color: var(--link);
   }

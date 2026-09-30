@@ -31,6 +31,7 @@
     chevronRight: svg('<path d="M9 6l6 6-6 6"/>', 14, ' class="card-menu-chevron"'),
     chevronLeft: svg('<path d="M15 6l-6 6 6 6"/>', 14),
     chevronDown: svg('<path d="M6 9l6 6 6-6"/>', 12, ' class="card-priority-chevron" stroke-width="2.5"'),
+    pencil: svg('<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4 11.5-11.5z"/><path d="M14.5 5.5l3 3"/>'),
     tag: svg('<path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/>'),
     list: svg('<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none"/>'),
     checkbox: svg('<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M8 12.5l3 3 5-6"/>'),
@@ -404,19 +405,27 @@
     });
   }
 
+  // Ставит курсор в конец текста. Курсор кладём внутрь последнего текстового
+  // узла (а не на границу элемента): Safari в позиции «после <b>/в конце <div>»
+  // иногда не рисует курсор.
   function placeCaretAtEnd(editor) {
     const range = document.createRange();
-    const last = editor.lastElementChild;
-    if (last && last.nodeName === 'DIV') {
-      if (last.childNodes.length === 1 && last.firstChild.nodeName === 'BR') range.setStart(last, 0);
-      else {
-        range.selectNodeContents(last);
-        range.collapse(false);
-      }
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    let lastText = null;
+    let node;
+    while ((node = walker.nextNode())) lastText = node;
+    const lastLine = editor.lastElementChild;
+    const lastLineEmpty = lastLine && lastLine.nodeName === 'DIV' &&
+      lastLine.childNodes.length === 1 && lastLine.firstChild.nodeName === 'BR';
+    if (lastLineEmpty) {
+      range.setStart(lastLine, 0);
+    } else if (lastText) {
+      range.setStart(lastText, lastText.nodeValue.length);
     } else {
       range.selectNodeContents(editor);
       range.collapse(false);
     }
+    range.collapse(true);
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(range);
@@ -544,6 +553,9 @@
 
     const textEl = document.createElement('div');
     textEl.className = 'card-text';
+    // ссылка на элемент текста: пока открыт редактор, его нет в DOM карточки,
+    // но сохранение доски должно брать последний сохранённый текст из него
+    el.cardTextEl = textEl;
     renderCardText(textEl, text);
     textEl.title = 'Двойной клик — редактировать';
 
@@ -559,7 +571,14 @@
     // Редактор — поле с форматированием (contenteditable): в нём сразу видно
     // жирный текст. При сохранении содержимое переводится обратно в «сырой»
     // текст карточки, где жирное выделено маркерами **…** (см. richLineSegments).
-    textEl.addEventListener('dblclick', () => {
+    // Открыть редактор можно двойным кликом по тексту или кнопкой-карандашом
+    textEl.addEventListener('dblclick', () => openEditor());
+
+    // Закрывает открытый редактор этой карточки (null — редактор закрыт)
+    let closeOpenEditor = null;
+
+    function openEditor() {
+      if (closeOpenEditor) return; // редактор уже открыт
       // на всякий случай снимаем выделение, если браузер всё же его поставил
       const selection = window.getSelection && window.getSelection();
       if (selection) selection.removeAllRanges();
@@ -631,6 +650,8 @@
       textEl.replaceWith(editWrap);
       editArea.focus();
       placeCaretAtEnd(editArea);
+      closeOpenEditor = (save) => finishEdit(save);
+      editBtn.classList.add('active');
 
       // Подсветка кнопки «B», когда в месте курсора включён жирный шрифт
       function updateBoldState() {
@@ -813,6 +834,8 @@
       function finishEdit(save) {
         if (finished) return;
         finished = true;
+        closeOpenEditor = null;
+        editBtn.classList.remove('active');
         document.removeEventListener('selectionchange', onSelectionChange);
         if (save) {
           const newText = editorNodesToRaw(editArea).replace(/^\n+|\n+$/g, '');
@@ -961,6 +984,23 @@
       });
 
       editArea.addEventListener('blur', () => finishEdit(true));
+    }
+
+    // --- Кнопка «Редактировать» (карандаш): открывает редактор текста,
+    // повторный клик — сохраняет и закрывает его (как Ctrl+Enter)
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'card-menu-btn card-edit-btn';
+    editBtn.innerHTML = ICONS.pencil;
+    editBtn.title = 'Редактировать текст';
+    editBtn.setAttribute('aria-label', 'Редактировать текст');
+    // не даём полю редактора потерять фокус раньше клика по кнопке
+    editBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.card-menu.open').forEach(m => m.classList.remove('open'));
+      if (closeOpenEditor) closeOpenEditor(true);
+      else openEditor();
     });
 
     const delBtn = document.createElement('button');
@@ -1152,9 +1192,10 @@
     menuWrapper.appendChild(tagBtn);
     menuWrapper.appendChild(menu);
 
-    // Кнопки справа в шапке карточки: теги, удалить
+    // Кнопки справа в шапке карточки: редактировать, теги, удалить
     const actions = document.createElement('div');
     actions.className = 'card-actions';
+    actions.appendChild(editBtn);
     actions.appendChild(menuWrapper);
     actions.appendChild(delBtn);
 
@@ -1498,7 +1539,7 @@
       const title = columnEl.querySelector('.column-title-input').value;
       const cards = [];
       columnEl.querySelectorAll('.cards > .card').forEach(cardEl => {
-        const text = getCardRawText(cardEl.querySelector('.card-text'));
+        const text = getCardRawText(cardEl.cardTextEl || cardEl.querySelector('.card-text'));
         const priority = cardEl.dataset.priority || DEFAULT_PRIORITY;
         const tags = (cardEl.dataset.tags || '').split(',').filter(Boolean);
         cards.push({ text, priority, tags });
