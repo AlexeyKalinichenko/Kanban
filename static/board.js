@@ -65,34 +65,28 @@
   }
 
   const PRIORITIES = {
-    critical: { label: 'Критический', className: 'priority-critical', bg: '#ffc6c6', fg: '#600000' },
-    medium:   { label: 'Средний',     className: 'priority-medium',   bg: '#c3faf5', fg: '#187574' },
-    minor:    { label: 'Минорный',    className: 'priority-minor',    bg: '#e0e2e8', fg: '#555a6a' }
+    // цвета плашек задаются в style.css (--prio-critical и т.д., свои для каждой темы)
+    critical: { label: 'Критический', className: 'priority-critical' },
+    medium:   { label: 'Средний',     className: 'priority-medium' },
+    minor:    { label: 'Минорный',    className: 'priority-minor' }
   };
   const DEFAULT_PRIORITY = 'medium';
 
   // Палитра из 10 возможных цветов для тегов (первые 4 — цвета тегов по умолчанию).
-  // Цвета взяты из дизайн-системы «Like Miro»: пастельный фон + тёмный текст.
+  // Насыщенные цвета; текст белый, на жёлтом и салатовом — тёмный.
   // Ключи не менялись — старые файлы досок открываются без миграции.
   const PALETTE = [
-    { key: 'red',    name: 'красный',     bg: '#ffc6c6', text: '#600000' },
-    { key: 'green',  name: 'зеленый',     bg: '#c3faf5', text: '#187574' },
-    { key: 'yellow', name: 'желтый',      bg: '#fff4c4', text: '#746019' },
-    { key: 'blue',   name: 'синий',       bg: '#4262ff', text: '#ffffff' },
-    { key: 'gray',   name: 'серый',       bg: '#e0e2e8', text: '#555a6a' },
-    { key: 'brown',  name: 'коричневый',  bg: '#ffe6cd', text: '#600000' },
-    { key: 'purple', name: 'фиолетовый',  bg: '#f5f3ff', text: '#2a41b6' },
-    { key: 'cyan',   name: 'голубой',     bg: '#0fbcb0', text: '#1c1c1e' },
-    { key: 'pink',   name: 'розовый',     bg: '#ffd8f4', text: '#600000' },
-    { key: 'lime',   name: 'салатовый',   bg: '#00b473', text: '#1c1c1e' }
+    { key: 'red',    name: 'красный',     bg: '#dc2626', text: '#ffffff' },
+    { key: 'green',  name: 'зеленый',     bg: '#15803d', text: '#ffffff' },
+    { key: 'yellow', name: 'желтый',      bg: '#eab308', text: '#1c1c1e' },
+    { key: 'blue',   name: 'синий',       bg: '#2563eb', text: '#ffffff' },
+    { key: 'gray',   name: 'серый',       bg: '#6b7280', text: '#ffffff' },
+    { key: 'brown',  name: 'коричневый',  bg: '#92400e', text: '#ffffff' },
+    { key: 'purple', name: 'фиолетовый',  bg: '#7c3aed', text: '#ffffff' },
+    { key: 'cyan',   name: 'голубой',     bg: '#0e7490', text: '#ffffff' },
+    { key: 'pink',   name: 'розовый',     bg: '#be185d', text: '#ffffff' },
+    { key: 'lime',   name: 'салатовый',   bg: '#65a30d', text: '#1c1c1e' }
   ];
-
-  // Кружок цвета в меню: пастельная заливка + тонкий контур цветом текста,
-  // чтобы светлые цвета не терялись на белом фоне меню.
-  function styleSwatch(swatchEl, bg, fg) {
-    swatchEl.style.background = bg;
-    swatchEl.style.boxShadow = 'inset 0 0 0 1px ' + fg;
-  }
 
   function getPaletteEntry(colorKey) {
     return PALETTE.find(p => p.key === colorKey) || PALETTE[0];
@@ -118,10 +112,13 @@
   }
 
   // Создаёт новый тег в общем реестре доски (сохранение — на вызывающей стороне).
+  // Максимальная длина названия тега (символов)
+  const TAG_LABEL_MAX = 15;
+
   function createTagDefinition(label, colorKey) {
     const def = {
       key: generateTagKey(),
-      label: label,
+      label: Array.from(label || '').slice(0, TAG_LABEL_MAX).join(''),
       color: PALETTE.some(p => p.key === colorKey) ? colorKey : PALETTE[0].key
     };
     tagRegistry.push(def);
@@ -543,11 +540,14 @@
     badge.type = 'button';
     badge.className = 'card-priority-badge';
     badge.title = 'Сменить приоритет';
-    const badgeDot = document.createElement('span');
-    badgeDot.className = 'dot';
+    // столбики уровня: сколько закрашено — задаёт класс приоритета карточки (style.css)
+    const badgeBars = document.createElement('span');
+    badgeBars.className = 'card-priority-bars';
+    badgeBars.setAttribute('aria-hidden', 'true');
+    badgeBars.innerHTML = '<i></i><i></i><i></i>';
     const badgeLabel = document.createElement('span');
     badgeLabel.textContent = info.label;
-    badge.appendChild(badgeDot);
+    badge.appendChild(badgeBars);
     badge.appendChild(badgeLabel);
     badge.insertAdjacentHTML('beforeend', ICONS.chevronDown);
 
@@ -1060,8 +1060,7 @@
 
         const swatch = document.createElement('span');
         swatch.className = 'card-menu-tag-swatch';
-        const pe = getPaletteEntry(def.color);
-        styleSwatch(swatch, pe.bg, pe.text);
+        swatch.style.background = getPaletteEntry(def.color).bg;
 
         const tLabel = document.createElement('span');
         tLabel.className = 'card-menu-item-label';
@@ -1128,7 +1127,7 @@
       nameInput.type = 'text';
       nameInput.className = 'card-menu-tag-name-input';
       nameInput.placeholder = 'Название';
-      nameInput.maxLength = 40;
+      nameInput.maxLength = TAG_LABEL_MAX;
       nameInput.setAttribute('aria-label', 'Название нового тега');
       nameInput.addEventListener('click', (e) => e.stopPropagation());
       nameInput.addEventListener('keydown', (e) => {
@@ -1215,8 +1214,9 @@
         const isActive = key === el.dataset.priority;
         if (isActive) opt.classList.add('active');
         const pSwatch = document.createElement('span');
-        pSwatch.className = 'card-menu-tag-swatch';
-        styleSwatch(pSwatch, PRIORITIES[key].bg, PRIORITIES[key].fg);
+        pSwatch.className = 'card-menu-priority-swatch';
+        // цвет рамки — из --prio-<приоритет> текущей темы
+        pSwatch.style.setProperty('--prio', 'var(--prio-' + key + ')');
         const pLabel = document.createElement('span');
         pLabel.className = 'card-menu-item-label';
         pLabel.textContent = PRIORITIES[key].label;
@@ -1260,16 +1260,17 @@
     const tagsContainer = document.createElement('div');
     tagsContainer.className = 'card-tags';
     tagsContainer.style.display = 'none';
-    labels.appendChild(tagsContainer);
 
     head.appendChild(labels);
     head.appendChild(actions);
     el.appendChild(head);
 
+    el.appendChild(textEl);
+    // теги — отдельной строкой под текстом карточки
+    el.appendChild(tagsContainer);
+
     el.dataset.tags = (initialTags || []).join(',');
     refreshCardTags(el);
-
-    el.appendChild(textEl);
 
     el.addEventListener('dragstart', (e) => {
       e.stopPropagation(); // не даём событию всплыть до столбца и запустить его drag
@@ -1550,7 +1551,18 @@
     return { title: boardTitleInput.value, background, columns, tagDefs: tagRegistry };
   }
 
+  // Точка в заголовке столбца окрашивается по его позиции на доске — так её цвет
+  // совпадает с отрезком полоски на плитке доски (start.js) и после
+  // перетаскивания, добавления или удаления столбцов.
+  function recolorColumnDots() {
+    board.querySelectorAll(':scope > .column').forEach((columnEl, i) => {
+      const dot = columnEl.querySelector('.column-title .dot');
+      if (dot) dot.style.background = dotColors[i % dotColors.length];
+    });
+  }
+
   function saveBoard() {
+    recolorColumnDots();
     fetch(BOARD_API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1564,6 +1576,7 @@
       const columnEl = createColumn(col.title, col.cards || []);
       board.insertBefore(columnEl, addColumnBtn);
     });
+    recolorColumnDots();
   }
 
   async function loadBoard() {
