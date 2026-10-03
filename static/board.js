@@ -112,10 +112,13 @@
   }
 
   // Создаёт новый тег в общем реестре доски (сохранение — на вызывающей стороне).
+  // Максимальная длина названия тега (символов)
+  const TAG_LABEL_MAX = 15;
+
   function createTagDefinition(label, colorKey) {
     const def = {
       key: generateTagKey(),
-      label: label,
+      label: Array.from(label || '').slice(0, TAG_LABEL_MAX).join(''),
       color: PALETTE.some(p => p.key === colorKey) ? colorKey : PALETTE[0].key
     };
     tagRegistry.push(def);
@@ -1124,7 +1127,7 @@
       nameInput.type = 'text';
       nameInput.className = 'card-menu-tag-name-input';
       nameInput.placeholder = 'Название';
-      nameInput.maxLength = 40;
+      nameInput.maxLength = TAG_LABEL_MAX;
       nameInput.setAttribute('aria-label', 'Название нового тега');
       nameInput.addEventListener('click', (e) => e.stopPropagation());
       nameInput.addEventListener('keydown', (e) => {

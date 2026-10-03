@@ -148,6 +148,11 @@ PALETTE_KEYS = {
 }
 DEFAULT_PALETTE_KEY = "gray"
 
+# Максимальная длина названия тега (символов) — как в поле ввода на фронтенде.
+# Действует для новых и изменённых названий; теги, которые уже сохранены
+# с более длинным названием (до введения лимита), не обрезаются.
+TAG_LABEL_MAX = 15
+
 # Цвета фона доски (совпадают со списком в static/board-bg.js).
 # Пустая строка — обычный фон (по умолчанию).
 BACKGROUND_KEYS = {"blue", "green", "purple", "red", "yellow"}
@@ -518,9 +523,22 @@ def save_board(board_id):
     # Дату создания хранит только сервер: браузер её не присылает,
     # поэтому переносим её из текущего файла, чтобы она не терялась при сохранении.
     payload["created"] = ""
+    existing_labels = {}
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
-            payload["created"] = parse_board(f.read()).get("created", "")
+            current = parse_board(f.read())
+        payload["created"] = current.get("created", "")
+        existing_labels = {t["key"]: t["label"] for t in current.get("tagDefs", [])}
+    # Лимит длины названия тега: новые и изменённые названия обрезаются,
+    # уже сохранённые (неизменённые) — остаются как есть.
+    tag_defs = payload.get("tagDefs")
+    if isinstance(tag_defs, list):
+        for t in tag_defs:
+            if not isinstance(t, dict):
+                continue
+            label = str(t.get("label", "") or "").strip()
+            if existing_labels.get(t.get("key")) != label:
+                t["label"] = label[:TAG_LABEL_MAX].strip()
     text = serialize_board(payload)
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)

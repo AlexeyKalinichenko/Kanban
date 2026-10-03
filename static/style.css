@@ -20,8 +20,9 @@
     --secondary-border: rgba(255,255,255,0.24);
     --count-bg: rgba(255,255,255,0.08);
     --primary-bg: #ffffff;
-    --add-bg: #9196a3;
-    --add-fg: #ffffff;
+    /* кнопка «+» создания карточки: светло-серая, почти белая */
+    --add-bg: #e5e5ea;
+    --add-fg: #1c1c1e;
     --prio-critical: #ff6b6b;
     --prio-medium: #3ecf7a;
     --prio-minor: #a5a8b5;
@@ -51,7 +52,8 @@
     --secondary-border: #c7cad5;
     --count-bg: #e0e2e8;
     --primary-bg: #1c1c1e;
-    --add-bg: #8a909e;
+    /* кнопка «+» создания карточки: тёмно-серая, почти чёрная */
+    --add-bg: #2c2c2e;
     --add-fg: #ffffff;
     --prio-critical: #d93036;
     --prio-medium: #15803d;
@@ -136,8 +138,11 @@
     border-radius: 8px;
   }
 
+  /* подсветка при наведении — полупрозрачная, в тон цвету названия:
+     сквозь неё виден фон доски (на цветном фоне — тот же оттенок, светлее/темнее) */
   .board-title-input:hover {
-    background: var(--hover);
+    background: rgba(127, 127, 127, 0.12);
+    background: color-mix(in srgb, currentColor 12%, transparent);
   }
 
   .board-title-input:focus {
@@ -1041,7 +1046,8 @@
 
   /* тег без названия — короткая цветная плашка той же высоты */
   .card-tag.card-tag-no-label {
-    min-width: 28px;
+    /* ширина как у тега со словом из трёх букв (например «три», «мир») */
+    min-width: 44px;
     min-height: 21px;
     justify-content: center;
   }
