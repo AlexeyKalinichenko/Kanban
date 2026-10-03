@@ -20,6 +20,11 @@
     --secondary-border: rgba(255,255,255,0.24);
     --count-bg: rgba(255,255,255,0.08);
     --primary-bg: #ffffff;
+    --add-bg: #9196a3;
+    --add-fg: #ffffff;
+    --prio-critical: #ff6b6b;
+    --prio-medium: #3ecf7a;
+    --prio-minor: #a5a8b5;
     --primary-fg: #1c1c1e;
     --shadow-subtle: none;
     --shadow-card: 0px 4px 12px 0px rgba(0, 0, 0, 0.4);
@@ -30,7 +35,7 @@
 
   :root[data-theme="light"] {
     --page: #ffffff;
-    --column: #f7f8fa;
+    --column: #eef0f4;
     --card: #ffffff;
     --card-border: #e0e2e8;
     --panel: #ffffff;
@@ -46,6 +51,11 @@
     --secondary-border: #c7cad5;
     --count-bg: #e0e2e8;
     --primary-bg: #1c1c1e;
+    --add-bg: #8a909e;
+    --add-fg: #ffffff;
+    --prio-critical: #d93036;
+    --prio-medium: #15803d;
+    --prio-minor: #6b6f7e;
     --primary-fg: #ffffff;
     --shadow-subtle: 0px 1px 2px 0px rgba(5, 0, 56, 0.04);
     --shadow-card: 0px 4px 12px 0px rgba(5, 0, 56, 0.06);
@@ -364,8 +374,7 @@
     gap: 6px;
   }
 
-  /* бейдж приоритета и теги — пастельные «таблетки» */
-  .card-priority-badge,
+  /* теги — насыщенные «таблетки» под текстом карточки */
   .card-tag {
     display: inline-flex;
     align-items: center;
@@ -378,17 +387,64 @@
     width: fit-content;
   }
 
-  .card-priority-badge .dot {
-    display: none;
+  /* приоритет — «контур»: цветная рамка и текст без заливки,
+     заглавные буквы и столбики уровня (3 — критический, 2 — средний, 1 — минорный) */
+  .card-priority-badge {
+    --prio: var(--prio-medium);
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 22px;
+    box-sizing: border-box;
+    padding: 0 5px 0 7px;
+    border-radius: 4px;
+    border: 1.5px solid var(--prio);
+    color: var(--prio);
+    background: transparent;
+    font-size: 11px;
+    line-height: 1;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    white-space: nowrap;
+    width: fit-content;
   }
 
-  .priority-critical .card-priority-badge { background: #ffc6c6; color: #600000; }
-  .priority-medium .card-priority-badge   { background: #c3faf5; color: #187574; }
-  .priority-minor .card-priority-badge    { background: #e0e2e8; color: #555a6a; }
+  .priority-critical .card-priority-badge { --prio: var(--prio-critical); }
+  .priority-medium .card-priority-badge   { --prio: var(--prio-medium); }
+  .priority-minor .card-priority-badge    { --prio: var(--prio-minor); }
 
-  /* контейнер тегов «растворяется» в строке бейджей */
+  .card-priority-bars {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 1.5px;
+    height: 10px;
+  }
+
+  .card-priority-bars i {
+    display: block;
+    width: 3px;
+    border-radius: 1px;
+    background: currentColor;
+    opacity: 0.3;
+  }
+
+  .card-priority-bars i:nth-child(1) { height: 4px; }
+  .card-priority-bars i:nth-child(2) { height: 7px; }
+  .card-priority-bars i:nth-child(3) { height: 10px; }
+
+  .priority-critical .card-priority-bars i,
+  .priority-medium .card-priority-bars i:nth-child(-n+2),
+  .priority-minor .card-priority-bars i:nth-child(1) {
+    opacity: 1;
+  }
+
+  /* теги — отдельной строкой под текстом карточки */
   .card-tags {
-    display: contents;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
   }
 
   .card-tag-remove {
@@ -587,6 +643,58 @@
     display: flex;
     align-items: center;
     gap: 2px;
+    border-radius: 8px;
+    transition: background 0.18s ease;
+  }
+
+  /* название тега в одну строку — меню расширяется под самое длинное */
+  .card-menu-tag-row .card-menu-item-label {
+    white-space: nowrap;
+  }
+
+  .card-menu-tag-row .card-menu-tag-swatch {
+    width: 13px;
+    height: 13px;
+  }
+
+  .card-menu-tag-row:hover {
+    background: var(--hover);
+  }
+
+  .card-menu-tag-row .card-menu-tag-toggle:hover {
+    background: transparent;
+  }
+
+  /* крестик удаления тега виден только при наведении на строку;
+     на сенсорных экранах (без наведения) — всегда */
+  .card-menu-tag-row .card-menu-tag-delete {
+    width: 28px;
+    height: 28px;
+    margin-right: 2px;
+    opacity: 0;
+    transition: opacity 0.18s ease, background 0.18s ease;
+  }
+
+  .card-menu-tag-row:hover .card-menu-tag-delete,
+  .card-menu-tag-row .card-menu-tag-delete:focus-visible {
+    opacity: 1;
+  }
+
+  @media (hover: none) {
+    .card-menu-tag-row .card-menu-tag-delete {
+      opacity: 1;
+    }
+  }
+
+  /* квадратик приоритета в меню — контурный, в цвет плашки */
+  .card-menu-priority-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    box-sizing: border-box;
+    border-radius: 3px;
+    border: 1.5px solid var(--prio);
+    flex-shrink: 0;
   }
 
   .card-menu-tag-toggle {
@@ -686,9 +794,9 @@
     width: 44px;
     height: 44px;
     border-radius: 9999px;
-    background: var(--primary-bg);
+    background: var(--add-bg);
     border: none;
-    color: var(--primary-fg);
+    color: var(--add-fg);
     cursor: pointer;
     flex-shrink: 0;
     display: flex;
@@ -730,17 +838,17 @@
   /* ---------- Цвет фона доски ---------- */
 
   /* тёмная тема — глубокие оттенки, светлая — пастельные */
-  :root[data-board-bg="blue"]   { --page: #1b2a4e; }
-  :root[data-board-bg="green"]  { --page: #163a2b; }
-  :root[data-board-bg="purple"] { --page: #2e2150; }
-  :root[data-board-bg="red"]    { --page: #45201f; }
-  :root[data-board-bg="yellow"] { --page: #3d3413; }
+  /* одинаковые насыщенные цвета в тёмной и светлой теме (как в палитре выбора) */
+  :root[data-board-bg="blue"]   { --page: #3d63dd; --page-text: #ffffff; }
+  :root[data-board-bg="green"]  { --page: #1f9d62; --page-text: #ffffff; }
+  :root[data-board-bg="purple"] { --page: #7b52e0; --page-text: #ffffff; }
+  :root[data-board-bg="red"]    { --page: #d9463f; --page-text: #ffffff; }
+  :root[data-board-bg="yellow"] { --page: #e0b416; --page-text: #1c1c1e; }
 
-  :root[data-theme="light"][data-board-bg="blue"]   { --page: #dce6ff; }
-  :root[data-theme="light"][data-board-bg="green"]  { --page: #d5f3e2; }
-  :root[data-theme="light"][data-board-bg="purple"] { --page: #e8defe; }
-  :root[data-theme="light"][data-board-bg="red"]    { --page: #ffdcda; }
-  :root[data-theme="light"][data-board-bg="yellow"] { --page: #fff1bf; }
+  /* название доски на цветном фоне — белое (на жёлтом — тёмное) */
+  :root[data-board-bg] .board-title-input {
+    color: var(--page-text);
+  }
 
   body {
     transition: background-color 0.25s ease;
@@ -866,22 +974,21 @@
   }
 
   button.card-priority-badge {
-    gap: 2px;
-    border: none;
     font-family: inherit;
     cursor: pointer;
-    transition: box-shadow 0.18s ease;
+    transition: background 0.18s ease;
   }
 
   .card-priority-chevron {
-    margin-right: -4px;
-    opacity: 0.6;
+    margin-right: -2px;
+    opacity: 0.75;
     transition: opacity 0.18s ease;
   }
 
+  /* при наведении и открытом меню плашка слегка подкрашивается своим цветом */
   button.card-priority-badge:hover,
   .card-priority-wrapper:has(.card-menu.open) button.card-priority-badge {
-    box-shadow: 0 0 0 2px var(--card), 0 0 0 3px currentColor;
+    background: color-mix(in srgb, var(--prio) 14%, transparent);
   }
 
   button.card-priority-badge:hover .card-priority-chevron,

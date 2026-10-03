@@ -416,6 +416,12 @@ def list_boards():
             "title": data.get("title") or DEFAULT_BOARD_TITLE,
             "background": data.get("background") or "",
             "columns_count": len(data.get("columns", [])),
+            # для плитки на стартовой: всего задач и разбивка по столбцам
+            "tasks_count": sum(len(c.get("cards", [])) for c in data.get("columns", [])),
+            "columns": [
+                {"title": c.get("title", ""), "count": len(c.get("cards", []))}
+                for c in data.get("columns", [])
+            ],
             "_created": data.get("created") or "",
         })
 

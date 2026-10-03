@@ -14,7 +14,7 @@ const ICONS = {
   plus: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>'
 };
 
-// Цвета точек-столбцов на плитке — те же, что у точек в заголовках столбцов доски
+// Цвета отрезков полоски на плитке — те же, что у точек в заголовках столбцов доски
 const COLUMN_DOT_COLORS = ['#ff9999', '#0fbcb0', '#4262ff', '#00b473', '#5b76fe', '#fcb900'];
 
 function updateThemeButton() {
@@ -31,12 +31,12 @@ themeToggleBtn.addEventListener('click', () => {
 updateThemeButton();
 
 
-function wordForColumns(count) {
+function wordForTasks(count) {
   const mod10 = count % 10;
   const mod100 = count % 100;
-  if (mod10 === 1 && mod100 !== 11) return 'столбец';
-  if ([2, 3, 4].includes(mod10) && ![12, 13, 14].includes(mod100)) return 'столбца';
-  return 'столбцов';
+  if (mod10 === 1 && mod100 !== 11) return 'задача';
+  if ([2, 3, 4].includes(mod10) && ![12, 13, 14].includes(mod100)) return 'задачи';
+  return 'задач';
 }
 
 function createAddTile() {
@@ -86,19 +86,40 @@ function createBoardTile(board) {
   title.className = 'board-tile-title';
   title.textContent = board.title;
 
+  // Низ плитки: общее число задач и полоска — по отрезку на столбец,
+  // ширина отрезка пропорциональна числу задач в нём (пустые столбцы не видны).
+  // Цвет отрезка — цвет точки столбца на доске (по порядку столбцов).
   const meta = document.createElement('div');
   meta.className = 'board-tile-meta';
-  const dotsCount = Math.min(board.columns_count, COLUMN_DOT_COLORS.length);
-  for (let i = 0; i < dotsCount; i++) {
-    const dot = document.createElement('span');
-    dot.className = 'board-tile-dot';
-    dot.style.background = COLUMN_DOT_COLORS[i];
-    meta.appendChild(dot);
+
+  const tasksCount = board.tasks_count || 0;
+  const count = document.createElement('div');
+  count.className = 'board-tile-count';
+  count.textContent = `${tasksCount} ${wordForTasks(tasksCount)}`;
+
+  const bar = document.createElement('div');
+  bar.className = 'board-tile-bar';
+  const columns = board.columns || [];
+  if (tasksCount > 0) {
+    bar.setAttribute('aria-label', 'По столбцам: ' + columns.map(c => `${c.title} — ${c.count}`).join(', '));
+    columns.forEach((col, i) => {
+      if (!col.count) return;
+      const seg = document.createElement('span');
+      seg.className = 'board-tile-bar-seg';
+      seg.style.flexGrow = col.count;
+      seg.style.background = COLUMN_DOT_COLORS[i % COLUMN_DOT_COLORS.length];
+      seg.title = `${col.title}: ${col.count}`;
+      bar.appendChild(seg);
+    });
+  } else {
+    const empty = document.createElement('span');
+    empty.className = 'board-tile-bar-empty';
+    bar.title = 'Нет задач';
+    bar.appendChild(empty);
   }
-  const metaText = document.createElement('span');
-  metaText.className = 'board-tile-meta-text';
-  metaText.textContent = `${board.columns_count} ${wordForColumns(board.columns_count)}`;
-  meta.appendChild(metaText);
+
+  meta.appendChild(count);
+  meta.appendChild(bar);
 
   const deleteBtn = document.createElement('button');
   deleteBtn.type = 'button';
