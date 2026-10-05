@@ -446,16 +446,6 @@ def serialize_board(data: dict) -> str:
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
-def migrate_legacy_file():
-    """Если ещё остался старый единственный файл Data/data.txt (до введения
-    множества досок) — переносим его в новый файл с GUID, чтобы не потерять данные.
-    Дальше, как и все доски из Data/, он переедет в первое созданное пространство."""
-    legacy_path = os.path.join(DATA_DIR, "data.txt")
-    if os.path.exists(legacy_path):
-        new_path = os.path.join(DATA_DIR, f"{uuid.uuid4()}.txt")
-        os.rename(legacy_path, new_path)
-
-
 # ---------------------------------------------------------------------------
 # Сессия, текущий пользователь, ограничения частоты запросов
 # ---------------------------------------------------------------------------
@@ -827,5 +817,4 @@ def save_board(board_id):
 
 
 if __name__ == "__main__":
-    migrate_legacy_file()
     app.run(debug=True, port=5050)

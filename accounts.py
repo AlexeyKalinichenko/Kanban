@@ -185,34 +185,10 @@ class AccountStore:
             now = _now()
             user = {"id": str(uuid.uuid4()), "name": name, "password": "",
                     "ver": 1, "created": now, "seen": now}
-            is_first = len(users) == 0
             users.append(user)
             self._save(users)
             os.makedirs(self.user_dir(user["id"]), exist_ok=True)
-            if is_first:
-                self._adopt_legacy_boards(user["id"])
             return dict(user)
-
-    def _adopt_legacy_boards(self, user_id: str) -> None:
-        """Доски, созданные до появления аккаунтов (лежат прямо в Data/),
-        переезжают в первое созданное пространство. Перед переносом
-        делается резервная копия в Data/_backup-before-accounts/."""
-        legacy = [f for f in os.listdir(self.data_dir)
-                  if f.endswith(".txt") and UUID_RE.match(f[:-4])]
-        order_file = os.path.join(self.data_dir, "boards-order.txt")
-        has_order = os.path.exists(order_file)
-        if not legacy and not has_order:
-            return
-        backup = os.path.join(self.data_dir, "_backup-before-accounts")
-        os.makedirs(backup, exist_ok=True)
-        target = self.user_dir(user_id)
-        os.makedirs(target, exist_ok=True)
-        for f in legacy + (["boards-order.txt"] if has_order else []):
-            src = os.path.join(self.data_dir, f)
-            shutil.copy2(src, os.path.join(backup, f))
-            shutil.move(src, os.path.join(target, f))
-        print(f"[accounts] {len(legacy)} досок перенесено в первое пространство "
-              f"(резервная копия: {backup})")
 
     # ------------------------------------------------------------------
     # Изменение аккаунта
