@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Вход — канбан-доски</title>
+<link rel="stylesheet" href="/static/fonts/nunito.css">
+<link rel="stylesheet" href="/static/start.css">
+<link rel="stylesheet" href="/static/login.css">
+<script src="/static/theme.js"></script>
+</head>
+<body>
+
+<button id="theme-toggle" class="theme-toggle-btn" type="button" title="Переключить тему"></button>
+
+<div class="page login-page">
+  <div class="header">
+    <div class="title">Вход</div>
+    <p class="subtitle">Войдите или начните новое пространство.</p>
+  </div>
+
+  <div class="login-notice" id="login-notice" hidden></div>
+
+  <form class="login-card" id="login-form" novalidate>
+    <label class="login-field">
+      <span class="login-label">Имя пространства</span>
+      <input class="login-input" id="login-name" name="username" type="text"
+             autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="30" required>
+    </label>
+    <label class="login-field">
+      <span class="login-label">Пароль</span>
+      <input class="login-input" id="login-password" name="password" type="password"
+             autocomplete="current-password" maxlength="128" required>
+    </label>
+    <div class="login-error" id="login-error" role="alert"></div>
+    <button class="login-btn login-btn-primary" id="login-submit" type="submit">Войти</button>
+    <p class="login-hint">Войти можно только в пространство, для которого задан пароль.</p>
+  </form>
+
+  <div class="login-divider"><span>или</span></div>
+
+  <div class="login-new">
+    <button class="login-btn login-btn-secondary" id="login-new" type="button">Начать новое пространство</button>
+    <div class="login-error" id="new-error" role="alert"></div>
+  </div>
+</div>
+
+<script src="/static/login.js"></script>
+</body>
+</html>

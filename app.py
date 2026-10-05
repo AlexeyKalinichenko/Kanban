@@ -1,12 +1,29 @@
 """
-Простой Flask-сервер для канбан-доски (поддержка нескольких досок).
+Простой Flask-сервер для канбан-доски (несколько досок, аккаунты пользователей).
 
-- Отдаёт index.html (стартовая страница со списком досок) и board.html
-  (страница одной доски); CSS и JS лежат отдельно в папке static/.
-- Каждая доска хранится в своём текстовом файле в папке Data,
-  имя файла — GUID, например Data/3fa85f64-5717-4562-b3fc-2c963f66afa6.txt.
-  Сколько файлов в папке Data — столько досок отображается на стартовой странице.
+- Отдаёт index.html (стартовая страница со списком досок), board.html
+  (страница одной доски) и login.html (вход); CSS и JS — в папке static/.
+- У каждого пользователя своё пространство досок (см. accounts.py):
+  доски пользователя лежат в Data/users/<id пользователя>/<guid>.txt.
+- Вход держится на подписанной cookie «kanban_session» = {uid, ver}:
+  подпись — ключом из Data/secret.key, ver — версия сессий пользователя
+  (растёт при смене пароля, и все остальные устройства выходят из аккаунта).
+- Первый заход без cookie — аккаунт создаётся автоматически (без пароля).
 
+Страницы:
+- GET    /                       — стартовая страница пространства
+- GET    /board/<id>             — доска
+- GET    /login                  — вход по имени и паролю / новое пространство
+
+API аккаунта:
+- GET    /api/account            — имя пространства, задан ли пароль
+- POST   /api/account/name       — сменить имя пространства (оно же логин)
+- POST   /api/account/password   — задать / сменить пароль
+- POST   /api/account/new        — начать новое пространство (со страницы входа)
+- POST   /api/login              — войти по имени и паролю
+- POST   /api/logout             — выйти
+
+API досок (только доски текущего пользователя):
 - GET    /api/boards            — список всех досок (id + название)
 - POST   /api/boards             — создать новую доску, возвращает её id
 - DELETE /api/boards/<id>        — удалить доску (удаляет файл)
@@ -20,15 +37,24 @@
 
 import os
 import re
+import secrets
+import threading
+import time
 import uuid
-from datetime import datetime
-from flask import Flask, Response, request, jsonify, send_from_directory
+from datetime import datetime, timedelta
+from markupsafe import escape
+from flask import Flask, Response, g, jsonify, redirect, request, session
+
+from accounts import AccountStore, PASSWORD_MAX, PASSWORD_MIN, NAME_RULES_TEXT
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Папка с данными всегда лежит рядом с app.py. У каждой доски свой файл
-# внутри неё, имя файла — GUID, например 3fa85f64-...-2c963f66afa6.txt
+# Папка с данными всегда лежит рядом с app.py. Доски пользователя — в
+# Data/users/<id пользователя>/, имя файла доски — GUID.
 DATA_DIR = os.path.join(BASE_DIR, "Data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+accounts = AccountStore(DATA_DIR)
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
@@ -37,11 +63,49 @@ app = Flask(__name__, static_folder="static", static_url_path="/static")
 # в браузере оставалось старое поведение.
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
+
+def load_secret_key() -> str:
+    """Ключ подписи cookie. Создаётся сам при первом запуске и хранится в
+    Data/secret.key. Если ключ потерять или заменить, все пользователи один раз
+    окажутся на странице входа (данные при этом не теряются)."""
+    path = os.path.join(DATA_DIR, "secret.key")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            key = f.read().strip()
+        if key:
+            return key
+    except OSError:
+        pass
+    key = secrets.token_hex(32)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(key + "\n")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return key
+
+
+app.secret_key = load_secret_key()
+app.config.update(
+    SESSION_COOKIE_NAME="kanban_session",
+    SESSION_COOKIE_HTTPONLY=True,          # скрипты на странице не видят cookie
+    SESSION_COOKIE_SAMESITE="Lax",         # чужие сайты не шлют запросы от имени пользователя
+    # Только по HTTPS — включается переменной окружения на сервере с HTTPS
+    # (пока сервер работает по HTTP на Mac, флаг выключен)
+    SESSION_COOKIE_SECURE=os.environ.get("KANBAN_SECURE_COOKIES") == "1",
+    PERMANENT_SESSION_LIFETIME=timedelta(days=365),  # продлевается при каждом заходе
+)
+
+# Метка «пользователь вышел»: после выхода сайт не создаёт новое пространство
+# автоматически, а показывает страницу входа
+LOGGED_OUT_COOKIE = "kanban_logged_out"
+
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 STATIC_LINK_RE = re.compile(r'((?:src|href)="/static/)([^"?#]+)"')
 
 
-def render_page(filename: str) -> Response:
+def render_page(filename: str, values: dict = None) -> Response:
     """Отдаёт HTML-страницу, дописывая к ссылкам на /static/... метку версии
     (?v=<время изменения файла>). После любой правки CSS/JS ссылка меняется,
     и браузер сразу загружает новую версию, а не берёт старую из кэша."""
@@ -57,6 +121,9 @@ def render_page(filename: str) -> Response:
         return f'{match.group(1)}{match.group(2)}?v={version}"'
 
     html = STATIC_LINK_RE.sub(add_version, html)
+    # подстановки вида {{SPACE_NAME}} (значения экранируются)
+    for key, value in (values or {}).items():
+        html = html.replace("{{" + key + "}}", str(escape(value)))
     response = Response(html, mimetype="text/html")
     response.headers["Cache-Control"] = "no-cache"
     return response
@@ -70,19 +137,27 @@ def is_valid_board_id(board_id: str) -> bool:
     return bool(UUID_RE.match(board_id or ""))
 
 
+def user_boards_dir() -> str:
+    """Папка досок текущего пользователя (Data/users/<id>/)."""
+    folder = accounts.user_dir(g.user["id"])
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
 def board_file_path(board_id: str) -> str:
-    return os.path.join(DATA_DIR, f"{board_id}.txt")
+    return os.path.join(user_boards_dir(), f"{board_id}.txt")
 
 
 # Порядок досок на стартовой странице (меняется перетаскиванием плиток).
-# Хранится отдельным файлом: по одному id доски на строку, сверху вниз =
-# слева направо. Имя файла — не GUID, поэтому в список досок он не попадает.
-ORDER_FILE = os.path.join(DATA_DIR, "boards-order.txt")
+# Хранится отдельным файлом в папке пользователя: по одному id доски на строку,
+# сверху вниз = слева направо. Имя файла — не GUID, в список досок он не попадает.
+def order_file_path() -> str:
+    return os.path.join(user_boards_dir(), "boards-order.txt")
 
 
 def read_board_order() -> list:
     try:
-        with open(ORDER_FILE, "r", encoding="utf-8") as f:
+        with open(order_file_path(), "r", encoding="utf-8") as f:
             lines = f.read().splitlines()
     except OSError:
         return []
@@ -97,8 +172,7 @@ def write_board_order(ids: list) -> None:
         if is_valid_board_id(board_id) and board_id not in seen:
             seen.add(board_id)
             clean.append(board_id)
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(ORDER_FILE, "w", encoding="utf-8") as f:
+    with open(order_file_path(), "w", encoding="utf-8") as f:
         f.write("# Порядок досок на стартовой странице: по одному id доски на строку\n")
         for board_id in clean:
             f.write(board_id + "\n")
@@ -374,11 +448,106 @@ def serialize_board(data: dict) -> str:
 
 def migrate_legacy_file():
     """Если ещё остался старый единственный файл Data/data.txt (до введения
-    множества досок) — переносим его в новый файл с GUID, чтобы не потерять данные."""
+    множества досок) — переносим его в новый файл с GUID, чтобы не потерять данные.
+    Дальше, как и все доски из Data/, он переедет в первое созданное пространство."""
     legacy_path = os.path.join(DATA_DIR, "data.txt")
     if os.path.exists(legacy_path):
-        new_path = board_file_path(str(uuid.uuid4()))
+        new_path = os.path.join(DATA_DIR, f"{uuid.uuid4()}.txt")
         os.rename(legacy_path, new_path)
+
+
+# ---------------------------------------------------------------------------
+# Сессия, текущий пользователь, ограничения частоты запросов
+# ---------------------------------------------------------------------------
+
+def current_user():
+    """Пользователь по cookie сессии или None. Cookie считается действительной,
+    если подпись верна, пользователь существует и версия сессий совпадает."""
+    if "user" in g:
+        return g.user
+    user = None
+    uid = session.get("uid")
+    if uid:
+        candidate = accounts.get(uid)
+        if candidate and candidate.get("ver") == session.get("ver"):
+            user = candidate
+    g.user = user
+    if user:
+        accounts.touch(user["id"])
+    return user
+
+
+def start_session(user: dict) -> None:
+    session.clear()
+    session.permanent = True
+    session["uid"] = user["id"]
+    session["ver"] = user["ver"]
+    g.user = user
+
+
+def had_session_cookie() -> bool:
+    """В браузере уже была cookie сессии (пусть и недействительная) или метка
+    выхода — значит, это не первый заход, и новое пространство само не создаётся."""
+    return bool(request.cookies.get(app.config["SESSION_COOKIE_NAME"]) or
+                request.cookies.get(LOGGED_OUT_COOKIE))
+
+
+def client_ip() -> str:
+    return request.remote_addr or "?"
+
+
+# Ограничения частоты: не больше LIMIT событий за WINDOW секунд с одного адреса
+LOGIN_FAIL_LIMIT, LOGIN_FAIL_WINDOW = 10, 15 * 60     # неудачные попытки входа
+CREATE_LIMIT, CREATE_WINDOW = 20, 60 * 60             # создание пространств
+_hits = {}
+_hits_lock = threading.Lock()
+
+
+def _recent_hits(kind: str, key: str, window: int) -> list:
+    now = time.time()
+    with _hits_lock:
+        hits = [t for t in _hits.get((kind, key), []) if now - t < window]
+        _hits[(kind, key)] = hits
+        return hits
+
+
+def is_limited(kind: str, key: str, limit: int, window: int) -> bool:
+    return len(_recent_hits(kind, key, window)) >= limit
+
+
+def add_hit(kind: str, key: str) -> None:
+    with _hits_lock:
+        _hits.setdefault((kind, key), []).append(time.time())
+
+
+# Чистка пустых аккаунтов без пароля — не чаще раза в сутки
+_last_cleanup = {"time": 0.0}
+
+
+@app.before_request
+def periodic_cleanup():
+    if time.time() - _last_cleanup["time"] > 24 * 60 * 60:
+        _last_cleanup["time"] = time.time()
+        try:
+            accounts.cleanup()
+        except Exception as err:  # чистка не должна ломать запросы
+            print("[accounts] ошибка чистки:", err)
+
+
+# API (кроме входа и создания пространства) — только для вошедших
+PUBLIC_API = {"/api/login", "/api/account/new"}
+
+
+@app.before_request
+def require_login_for_api():
+    if request.path.startswith("/api/") and request.path not in PUBLIC_API:
+        if not current_user():
+            return jsonify({"error": "auth"}), 401
+    return None
+
+
+def json_error(message: str, status: int = 400):
+    return jsonify({"error": message}), status
 
 
 # ---------------------------------------------------------------------------
@@ -387,12 +556,129 @@ def migrate_legacy_file():
 
 @app.route("/")
 def index():
-    return render_page("index.html")
+    if not current_user():
+        if had_session_cookie():
+            # был вход, но cookie устарела / пользователь вышел — на страницу входа
+            return redirect("/login")
+        # первый заход: создаём пространство автоматически
+        if is_limited("create", client_ip(), CREATE_LIMIT, CREATE_WINDOW):
+            return redirect("/login?limit=1")
+        add_hit("create", client_ip())
+        start_session(accounts.create())
+    return render_page("index.html", {"SPACE_NAME": current_user()["name"]})
 
 
 @app.route("/board/<board_id>")
 def board_page(board_id):
+    if not current_user():
+        return redirect("/")
+    # чужая или удалённая доска — на стартовую страницу своего пространства
+    if not is_valid_board_id(board_id) or not os.path.exists(board_file_path(board_id)):
+        return redirect("/")
     return render_page("board.html")
+
+
+@app.route("/login")
+def login_page():
+    if current_user():
+        return redirect("/")
+    return render_page("login.html")
+
+
+# ---------------------------------------------------------------------------
+# API: аккаунт
+# ---------------------------------------------------------------------------
+
+def account_json(user: dict):
+    return jsonify({
+        "name": user["name"],
+        "hasPassword": bool(user.get("password")),
+        "nameRules": NAME_RULES_TEXT,
+        "passwordMin": PASSWORD_MIN,
+    })
+
+
+@app.route("/api/account", methods=["GET"])
+def get_account():
+    response = account_json(current_user())
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/api/account/name", methods=["POST"])
+def rename_account():
+    user = current_user()
+    payload = request.get_json(force=True, silent=True) or {}
+    name = str(payload.get("name") or "").strip()
+    error = accounts.validate_name(name, user["id"])
+    if error:
+        return json_error(error)
+    accounts.rename(user["id"], name)
+    return account_json(accounts.get(user["id"]))
+
+
+@app.route("/api/account/password", methods=["POST"])
+def change_password():
+    user = current_user()
+    payload = request.get_json(force=True, silent=True) or {}
+    current = str(payload.get("current") or "")
+    new = str(payload.get("password") or "")
+    if user.get("password"):
+        ip = client_ip()
+        if is_limited("login", ip, LOGIN_FAIL_LIMIT, LOGIN_FAIL_WINDOW):
+            return json_error("Слишком много попыток. Попробуйте через 15 минут.", 429)
+        if not accounts.check_password(user, current):
+            add_hit("login", ip)
+            return json_error("Текущий пароль указан неверно.")
+    if len(new) < PASSWORD_MIN:
+        return json_error(f"Пароль должен быть не короче {PASSWORD_MIN} символов.")
+    if len(new) > PASSWORD_MAX:
+        return json_error(f"Пароль должен быть не длиннее {PASSWORD_MAX} символов.")
+    # версия сессий растёт — все остальные устройства выходят из аккаунта,
+    # а это устройство получает новую cookie и остаётся в аккаунте
+    new_ver = accounts.set_password(user["id"], new)
+    updated = accounts.get(user["id"])
+    updated["ver"] = new_ver
+    start_session(updated)
+    return account_json(updated)
+
+
+@app.route("/api/account/new", methods=["POST"])
+def new_account():
+    if is_limited("create", client_ip(), CREATE_LIMIT, CREATE_WINDOW):
+        return json_error("Слишком много новых пространств с этого адреса. Попробуйте позже.", 429)
+    add_hit("create", client_ip())
+    start_session(accounts.create())
+    response = jsonify({"status": "ok"})
+    response.delete_cookie(LOGGED_OUT_COOKIE)
+    return response
+
+
+@app.route("/api/login", methods=["POST"])
+def login():
+    ip = client_ip()
+    if is_limited("login", ip, LOGIN_FAIL_LIMIT, LOGIN_FAIL_WINDOW):
+        return json_error("Слишком много попыток входа. Попробуйте через 15 минут.", 429)
+    payload = request.get_json(force=True, silent=True) or {}
+    user = accounts.find_by_name(str(payload.get("name") or ""))
+    if not user or not accounts.check_password(user, str(payload.get("password") or "")):
+        add_hit("login", ip)
+        # одно сообщение для всех случаев — не подсказываем, какие имена существуют
+        return json_error("Неверное имя или пароль.")
+    start_session(user)
+    response = jsonify({"status": "ok"})
+    response.delete_cookie(LOGGED_OUT_COOKIE)
+    return response
+
+
+@app.route("/api/logout", methods=["POST"])
+def logout():
+    session.clear()
+    response = jsonify({"status": "ok"})
+    response.set_cookie(LOGGED_OUT_COOKIE, "1", max_age=365 * 24 * 60 * 60,
+                        httponly=True, samesite="Lax",
+                        secure=app.config["SESSION_COOKIE_SECURE"])
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -401,15 +687,15 @@ def board_page(board_id):
 
 @app.route("/api/boards", methods=["GET"])
 def list_boards():
-    os.makedirs(DATA_DIR, exist_ok=True)
+    folder = user_boards_dir()
     boards = []
-    for filename in os.listdir(DATA_DIR):
+    for filename in os.listdir(folder):
         if not filename.endswith(".txt"):
             continue
         board_id = filename[:-4]
         if not is_valid_board_id(board_id):
             continue
-        path = os.path.join(DATA_DIR, filename)
+        path = os.path.join(folder, filename)
         try:
             with open(path, "r", encoding="utf-8") as f:
                 text = f.read()
@@ -453,7 +739,6 @@ def create_board():
     payload = request.get_json(force=True, silent=True) or {}
     title = str(payload.get("title") or "").strip() or DEFAULT_BOARD_TITLE
 
-    os.makedirs(DATA_DIR, exist_ok=True)
     board_id = str(uuid.uuid4())
     created = datetime.now().isoformat(timespec="seconds")
     text = serialize_board({"title": title, "created": created, "columns": []})
@@ -503,11 +788,8 @@ def get_board(board_id):
         return jsonify({"error": "invalid id"}), 400
     path = board_file_path(board_id)
     if not os.path.exists(path):
-        return jsonify({
-            "title": DEFAULT_BOARD_TITLE,
-            "columns": [],
-            "tagDefs": [dict(t) for t in DEFAULT_TAG_DEFS],
-        })
+        # доски нет в пространстве этого пользователя (удалена или чужая)
+        return jsonify({"error": "not found"}), 404
     with open(path, "r", encoding="utf-8") as f:
         text = f.read()
     return jsonify(parse_board(text))
@@ -518,17 +800,16 @@ def save_board(board_id):
     if not is_valid_board_id(board_id):
         return jsonify({"error": "invalid id"}), 400
     payload = request.get_json(force=True, silent=True) or {}
-    os.makedirs(DATA_DIR, exist_ok=True)
     path = board_file_path(board_id)
     # Дату создания хранит только сервер: браузер её не присылает,
     # поэтому переносим её из текущего файла, чтобы она не терялась при сохранении.
-    payload["created"] = ""
-    existing_labels = {}
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            current = parse_board(f.read())
-        payload["created"] = current.get("created", "")
-        existing_labels = {t["key"]: t["label"] for t in current.get("tagDefs", [])}
+    if not os.path.exists(path):
+        # сохранять можно только существующую доску своего пространства
+        return jsonify({"error": "not found"}), 404
+    with open(path, "r", encoding="utf-8") as f:
+        current = parse_board(f.read())
+    payload["created"] = current.get("created", "")
+    existing_labels = {t["key"]: t["label"] for t in current.get("tagDefs", [])}
     # Лимит длины названия тега: новые и изменённые названия обрезаются,
     # уже сохранённые (неизменённые) — остаются как есть.
     tag_defs = payload.get("tagDefs")
@@ -546,6 +827,5 @@ def save_board(board_id):
 
 
 if __name__ == "__main__":
-    os.makedirs(DATA_DIR, exist_ok=True)
     migrate_legacy_file()
     app.run(debug=True, port=5050)

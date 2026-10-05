@@ -132,3 +132,38 @@
   border-color: var(--link, #5b76fe);
   box-shadow: 0 0 0 1px var(--link, #5b76fe);
 }
+
+/* Окно-форма (KanbanDialog.form): подписи полей и текст ошибки */
+.confirm-field {
+  display: block;
+  margin-top: 12px;
+}
+
+.confirm-field-label {
+  display: block;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: var(--text2);
+}
+
+.confirm-field .confirm-input {
+  margin-top: 6px;
+}
+
+.confirm-error {
+  min-height: 0;
+  margin-top: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #e5484d;
+}
+
+.confirm-error:empty {
+  display: none;
+}
+
+.confirm-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

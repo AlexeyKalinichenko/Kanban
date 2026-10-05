@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ваши доски</title>
+<title>{{SPACE_NAME}} — доски</title>
 <link rel="stylesheet" href="/static/fonts/nunito.css">
 <link rel="stylesheet" href="/static/start.css">
 <link rel="stylesheet" href="/static/dialog.css">
@@ -11,18 +11,27 @@
 </head>
 <body>
 
+<div class="account">
+  <button id="account-btn" class="account-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="Аккаунт" hidden></button>
+  <div id="account-menu" class="account-menu" role="menu" hidden></div>
+</div>
+
 <button id="theme-toggle" class="theme-toggle-btn" type="button" title="Переключить тему"></button>
 
 <div class="page">
   <div class="header">
-    <div class="title">Ваши доски</div>
-    <p class="subtitle">Выберите одну или создайте новую.</p>
+    <div class="title" id="space-title">{{SPACE_NAME}}</div>
+    <p class="subtitle">Ваши доски — выберите одну или создайте новую.</p>
   </div>
+
+  <div class="password-banner" id="password-banner" hidden></div>
 
   <div class="boards-grid" id="boards-grid"></div>
 </div>
 
+<script src="/static/auth.js"></script>
 <script src="/static/dialog.js"></script>
+<script src="/static/account.js"></script>
 <script src="/static/start.js"></script>
 </body>
 </html>

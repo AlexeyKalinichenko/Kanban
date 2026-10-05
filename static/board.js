@@ -1582,6 +1582,11 @@
   async function loadBoard() {
     try {
       const res = await fetch(BOARD_API_URL);
+      if (res.status === 404) {
+        // доску удалили (например, в другой вкладке) — возвращаемся к списку
+        window.location.href = '/';
+        return;
+      }
       const data = await res.json();
       if (data.title) {
         boardTitleInput.value = data.title;

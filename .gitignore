@@ -13,3 +13,8 @@ venv/
 
 # Board data (local only)
 Data/*.txt
+
+# Accounts (local only): user spaces, session secret, pre-migration backup
+Data/users/
+Data/secret.key
+Data/_backup-before-accounts/
