@@ -1,10 +1,10 @@
 """
 Аккаунты пользователей канбан-доски.
 
-Каждый пользователь — своё пространство досок. Имя пространства одновременно
-служит логином. Аккаунт создаётся автоматически при первом заходе (без пароля);
-пароль пользователь задаёт сам, и только после этого может войти в своё
-пространство с другого устройства.
+Каждый пользователь — своё пространство досок. Логин пользователь придумывает
+сам при создании пространства (на странице входа); после создания логин не
+меняется. Пароля сначала нет — пользователь задаёт его сам, и только после
+этого может войти в своё пространство с другого устройства.
 
 Хранение (человекочитаемый текст, как и доски):
 
@@ -15,7 +15,7 @@
 Формат Data/users.txt:
 
   USER id=3fa85f64-5717-4562-b3fc-2c963f66afa6
-  NAME: user-4821
+  NAME: alexey
   PASSWORD: pbkdf2:sha256:...     (строки нет, пока пароль не задан)
   VER: 1                          (версия сессий: +1 при смене пароля —
                                    все остальные устройства выходят из аккаунта)
@@ -26,7 +26,6 @@
 
 import os
 import re
-import secrets
 import shutil
 import threading
 import uuid
@@ -38,10 +37,10 @@ UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 
-# Имя пространства (оно же логин): буквы (русские и латинские), цифры, «-» и «_»,
-# от 3 до 30 символов, без пробелов. Уникально без учёта регистра.
-NAME_RE = re.compile(r"^[A-Za-zА-Яа-яЁё0-9_-]{3,30}$")
-NAME_RULES_TEXT = "От 3 до 30 символов: буквы, цифры, «-» и «_», без пробелов."
+# Логин (он же имя пространства): латинские буквы, цифры, «-» и «_», от 3 до 30
+# символов. Уникален без учёта регистра. Задаётся при создании и больше не меняется.
+NAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,30}$")
+NAME_RULES_TEXT = "От 3 до 30 символов: латинские буквы, цифры, «-» и «_»."
 
 PASSWORD_MIN = 6
 PASSWORD_MAX = 128
@@ -168,50 +167,35 @@ class AccountStore:
     # Создание аккаунта
     # ------------------------------------------------------------------
 
-    def create(self) -> dict:
-        """Создаёт аккаунт с именем вида user-4821 и без пароля."""
+    def validate_name(self, name: str):
+        """Возвращает текст ошибки или None, если логин подходит и свободен."""
+        name = (name or "").strip()
+        if not NAME_RE.match(name):
+            return NAME_RULES_TEXT
+        if self.find_by_name(name):
+            return "Этот логин уже занят."
+        return None
+
+    def create(self, name: str):
+        """Создаёт аккаунт с выбранным логином, без пароля.
+        Возвращает (аккаунт, None) или (None, текст ошибки)."""
+        name = (name or "").strip()
         with self._lock:
+            error = self.validate_name(name)
+            if error:
+                return None, error
             users = self._load()
-            taken = {u["name"].lower() for u in users}
-            name = ""
-            for attempt in range(200):
-                digits = 4 if attempt < 100 else 6
-                candidate = "user-" + "".join(secrets.choice("0123456789") for _ in range(digits))
-                if candidate.lower() not in taken:
-                    name = candidate
-                    break
-            if not name:
-                name = "user-" + secrets.token_hex(4)
             now = _now()
             user = {"id": str(uuid.uuid4()), "name": name, "password": "",
                     "ver": 1, "created": now, "seen": now}
             users.append(user)
             self._save(users)
             os.makedirs(self.user_dir(user["id"]), exist_ok=True)
-            return dict(user)
+            return dict(user), None
 
     # ------------------------------------------------------------------
-    # Изменение аккаунта
+    # Пароль
     # ------------------------------------------------------------------
-
-    def validate_name(self, name: str, user_id: str = ""):
-        """Возвращает текст ошибки или None, если имя подходит."""
-        name = (name or "").strip()
-        if not NAME_RE.match(name):
-            return NAME_RULES_TEXT
-        other = self.find_by_name(name)
-        if other and other["id"] != user_id:
-            return "Это имя уже занято."
-        return None
-
-    def rename(self, user_id: str, name: str) -> None:
-        name = name.strip()
-        with self._lock:
-            users = self._load()
-            for u in users:
-                if u["id"] == user_id:
-                    u["name"] = name
-            self._save(users)
 
     def set_password(self, user_id: str, password: str) -> int:
         """Задаёт пароль и увеличивает версию сессий (все остальные устройства

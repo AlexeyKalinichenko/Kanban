@@ -104,7 +104,6 @@
 }
 
 .login-btn-secondary {
-  width: 100%;
   background: transparent;
   border: 1px solid var(--secondary-border);
   color: var(--text);
@@ -131,11 +130,17 @@
   background: var(--panel-border);
 }
 
-.login-new {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  text-align: center;
+.login-card-title {
+  font-size: 16px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.login-rules {
+  margin: -8px 0 0;
+  color: var(--text2);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 @media (max-width: 600px) {

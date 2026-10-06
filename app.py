@@ -8,19 +8,19 @@
 - Вход держится на подписанной cookie «kanban_session» = {uid, ver}:
   подпись — ключом из Data/secret.key, ver — версия сессий пользователя
   (растёт при смене пароля, и все остальные устройства выходят из аккаунта).
-- Первый заход без cookie — аккаунт создаётся автоматически (без пароля).
+- Без входа — страница /login: войти по логину и паролю или создать новое
+  пространство, придумав логин (пароль можно задать позже).
 
 Страницы:
 - GET    /                       — стартовая страница пространства
 - GET    /board/<id>             — доска
-- GET    /login                  — вход по имени и паролю / новое пространство
+- GET    /login                  — вход по логину и паролю / новое пространство
 
 API аккаунта:
-- GET    /api/account            — имя пространства, задан ли пароль
-- POST   /api/account/name       — сменить имя пространства (оно же логин)
+- GET    /api/account            — логин, задан ли пароль
 - POST   /api/account/password   — задать / сменить пароль
-- POST   /api/account/new        — начать новое пространство (со страницы входа)
-- POST   /api/login              — войти по имени и паролю
+- POST   /api/account/new        — создать пространство с выбранным логином
+- POST   /api/login              — войти по логину и паролю
 - POST   /api/logout             — выйти
 
 API досок (только доски текущего пользователя):
@@ -42,10 +42,9 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta
-from markupsafe import escape
 from flask import Flask, Response, g, jsonify, redirect, request, session
 
-from accounts import AccountStore, PASSWORD_MAX, PASSWORD_MIN, NAME_RULES_TEXT
+from accounts import AccountStore, PASSWORD_MAX, PASSWORD_MIN
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -97,15 +96,11 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=timedelta(days=365),  # продлевается при каждом заходе
 )
 
-# Метка «пользователь вышел»: после выхода сайт не создаёт новое пространство
-# автоматически, а показывает страницу входа
-LOGGED_OUT_COOKIE = "kanban_logged_out"
-
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 STATIC_LINK_RE = re.compile(r'((?:src|href)="/static/)([^"?#]+)"')
 
 
-def render_page(filename: str, values: dict = None) -> Response:
+def render_page(filename: str) -> Response:
     """Отдаёт HTML-страницу, дописывая к ссылкам на /static/... метку версии
     (?v=<время изменения файла>). После любой правки CSS/JS ссылка меняется,
     и браузер сразу загружает новую версию, а не берёт старую из кэша."""
@@ -121,9 +116,6 @@ def render_page(filename: str, values: dict = None) -> Response:
         return f'{match.group(1)}{match.group(2)}?v={version}"'
 
     html = STATIC_LINK_RE.sub(add_version, html)
-    # подстановки вида {{SPACE_NAME}} (значения экранируются)
-    for key, value in (values or {}).items():
-        html = html.replace("{{" + key + "}}", str(escape(value)))
     response = Response(html, mimetype="text/html")
     response.headers["Cache-Control"] = "no-cache"
     return response
@@ -475,13 +467,6 @@ def start_session(user: dict) -> None:
     g.user = user
 
 
-def had_session_cookie() -> bool:
-    """В браузере уже была cookie сессии (пусть и недействительная) или метка
-    выхода — значит, это не первый заход, и новое пространство само не создаётся."""
-    return bool(request.cookies.get(app.config["SESSION_COOKIE_NAME"]) or
-                request.cookies.get(LOGGED_OUT_COOKIE))
-
-
 def client_ip() -> str:
     return request.remote_addr or "?"
 
@@ -547,15 +532,10 @@ def json_error(message: str, status: int = 400):
 @app.route("/")
 def index():
     if not current_user():
-        if had_session_cookie():
-            # был вход, но cookie устарела / пользователь вышел — на страницу входа
-            return redirect("/login")
-        # первый заход: создаём пространство автоматически
-        if is_limited("create", client_ip(), CREATE_LIMIT, CREATE_WINDOW):
-            return redirect("/login?limit=1")
-        add_hit("create", client_ip())
-        start_session(accounts.create())
-    return render_page("index.html", {"SPACE_NAME": current_user()["name"]})
+        # не вошли (первый заход, вышли или cookie устарела) — страница входа,
+        # там же можно создать новое пространство
+        return redirect("/login")
+    return render_page("index.html")
 
 
 @app.route("/board/<board_id>")
@@ -583,7 +563,6 @@ def account_json(user: dict):
     return jsonify({
         "name": user["name"],
         "hasPassword": bool(user.get("password")),
-        "nameRules": NAME_RULES_TEXT,
         "passwordMin": PASSWORD_MIN,
     })
 
@@ -593,18 +572,6 @@ def get_account():
     response = account_json(current_user())
     response.headers["Cache-Control"] = "no-store"
     return response
-
-
-@app.route("/api/account/name", methods=["POST"])
-def rename_account():
-    user = current_user()
-    payload = request.get_json(force=True, silent=True) or {}
-    name = str(payload.get("name") or "").strip()
-    error = accounts.validate_name(name, user["id"])
-    if error:
-        return json_error(error)
-    accounts.rename(user["id"], name)
-    return account_json(accounts.get(user["id"]))
 
 
 @app.route("/api/account/password", methods=["POST"])
@@ -637,11 +604,13 @@ def change_password():
 def new_account():
     if is_limited("create", client_ip(), CREATE_LIMIT, CREATE_WINDOW):
         return json_error("Слишком много новых пространств с этого адреса. Попробуйте позже.", 429)
+    payload = request.get_json(force=True, silent=True) or {}
+    user, error = accounts.create(str(payload.get("name") or ""))
+    if error:
+        return json_error(error)
     add_hit("create", client_ip())
-    start_session(accounts.create())
-    response = jsonify({"status": "ok"})
-    response.delete_cookie(LOGGED_OUT_COOKIE)
-    return response
+    start_session(user)
+    return jsonify({"status": "ok"})
 
 
 @app.route("/api/login", methods=["POST"])
@@ -653,22 +622,16 @@ def login():
     user = accounts.find_by_name(str(payload.get("name") or ""))
     if not user or not accounts.check_password(user, str(payload.get("password") or "")):
         add_hit("login", ip)
-        # одно сообщение для всех случаев — не подсказываем, какие имена существуют
-        return json_error("Неверное имя или пароль.")
+        # одно сообщение для всех случаев — не подсказываем, какие логины существуют
+        return json_error("Неверный логин или пароль.")
     start_session(user)
-    response = jsonify({"status": "ok"})
-    response.delete_cookie(LOGGED_OUT_COOKIE)
-    return response
+    return jsonify({"status": "ok"})
 
 
 @app.route("/api/logout", methods=["POST"])
 def logout():
     session.clear()
-    response = jsonify({"status": "ok"})
-    response.set_cookie(LOGGED_OUT_COOKIE, "1", max_age=365 * 24 * 60 * 60,
-                        httponly=True, samesite="Lax",
-                        secure=app.config["SESSION_COOKIE_SECURE"])
-    return response
+    return jsonify({"status": "ok"})
 
 
 # ---------------------------------------------------------------------------

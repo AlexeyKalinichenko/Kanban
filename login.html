@@ -16,14 +16,12 @@
 <div class="page login-page">
   <div class="header">
     <div class="title">Вход</div>
-    <p class="subtitle">Войдите или начните новое пространство.</p>
+    <p class="subtitle">Войдите или создайте новое пространство.</p>
   </div>
-
-  <div class="login-notice" id="login-notice" hidden></div>
 
   <form class="login-card" id="login-form" novalidate>
     <label class="login-field">
-      <span class="login-label">Имя пространства</span>
+      <span class="login-label">Логин</span>
       <input class="login-input" id="login-name" name="username" type="text"
              autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="30" required>
     </label>
@@ -39,10 +37,17 @@
 
   <div class="login-divider"><span>или</span></div>
 
-  <div class="login-new">
-    <button class="login-btn login-btn-secondary" id="login-new" type="button">Начать новое пространство</button>
+  <form class="login-card" id="new-form" novalidate>
+    <div class="login-card-title">Новое пространство</div>
+    <label class="login-field">
+      <span class="login-label">Придумайте логин</span>
+      <input class="login-input" id="new-name" name="new-username" type="text"
+             autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="30" required>
+    </label>
+    <p class="login-rules">От 3 до 30 символов: латинские буквы, цифры, «-» и «_». Изменить логин потом будет нельзя.</p>
     <div class="login-error" id="new-error" role="alert"></div>
-  </div>
+    <button class="login-btn login-btn-secondary" id="new-submit" type="submit">Создать пространство</button>
+  </form>
 </div>
 
 <script src="/static/login.js"></script>

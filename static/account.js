@@ -1,5 +1,5 @@
-// Аккаунт на стартовой странице: имя пространства в заголовке, меню
-// аккаунта (сменить имя, задать/сменить пароль, выйти) и напоминание
+// Аккаунт на стартовой странице: кнопка с логином, меню
+// аккаунта (задать/сменить пароль, выйти) и напоминание
 // задать пароль, пока он не задан.
 (function () {
   const ICONS = {
@@ -8,7 +8,6 @@
     lock: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'
   };
 
-  const titleEl = document.getElementById('space-title');
   const accountBtn = document.getElementById('account-btn');
   const menu = document.getElementById('account-menu');
   const banner = document.getElementById('password-banner');
@@ -28,19 +27,11 @@
 
   function render() {
     if (!account) return;
-    titleEl.textContent = account.name;
-    document.title = account.name + ' — доски';
-
     accountBtn.innerHTML = ICONS.user + '<span class="account-btn-name"></span>' + ICONS.chevron;
     accountBtn.querySelector('.account-btn-name').textContent = account.name;
     accountBtn.hidden = false;
 
     menu.innerHTML = '';
-    const head = document.createElement('div');
-    head.className = 'account-menu-head';
-    head.textContent = account.hasPassword ? 'Пароль задан' : 'Пароль не задан';
-    menu.appendChild(head);
-    addItem('Сменить имя', renameDialog);
     addItem(account.hasPassword ? 'Сменить пароль' : 'Задать пароль', passwordDialog);
     addItem('Выйти', logout, true);
 
@@ -97,24 +88,6 @@
   });
 
   // --- окна ---
-  function renameDialog() {
-    window.KanbanDialog.form({
-      title: 'Имя пространства',
-      message: 'Это имя — ваш логин для входа с других устройств. ' + account.nameRules,
-      confirmLabel: 'Сохранить',
-      fields: [{ name: 'name', value: account.name, maxLength: 30, autocomplete: 'username' }],
-      onSubmit: async ({ name }) => {
-        name = name.trim();
-        if (name === account.name) return null;
-        const { ok, data } = await postJson('/api/account/name', { name });
-        if (!ok) return data.error || 'Не удалось сменить имя.';
-        account = data;
-        render();
-        return null;
-      }
-    });
-  }
-
   function passwordDialog() {
     const min = account.passwordMin || 6;
     const fields = [];
@@ -128,7 +101,7 @@
       title: account.hasPassword ? 'Сменить пароль' : 'Задать пароль',
       message: account.hasPassword
         ? 'После смены пароля на всех остальных устройствах придётся войти заново.'
-        : `С паролем вы сможете войти в пространство «${account.name}» с любого устройства.`,
+        : `С паролем вы сможете войти под логином «${account.name}» с любого устройства.`,
       confirmLabel: 'Сохранить',
       fields,
       onSubmit: async ({ current, password, repeat }) => {

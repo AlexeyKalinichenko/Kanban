@@ -358,13 +358,6 @@ svg { display: block; flex-shrink: 0; }
 
 .account-menu[hidden] { display: none; }
 
-.account-menu-head {
-  padding: 6px 12px 8px;
-  color: var(--text2);
-  font-size: 13px;
-  line-height: 1.4;
-}
-
 .account-menu-item {
   height: 36px;
   padding: 0 12px;
