@@ -333,6 +333,8 @@ svg { display: block; flex-shrink: 0; }
   background: var(--hover);
 }
 
+.account-login-btn[hidden] { display: none; }
+
 .account-btn {
   display: inline-flex;
   align-items: center;

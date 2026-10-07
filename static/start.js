@@ -45,6 +45,8 @@ function createAddTile() {
   tile.className = 'add-board-tile';
   tile.innerHTML = '<span class="add-board-pill">' + ICONS.plus + 'Создать доску</span>';
   tile.addEventListener('click', async () => {
+    // гость: создание доски создаёт аккаунт — сначала окно «Как вас зовут?»
+    if (window.KanbanAccount) await window.KanbanAccount.askNameIfGuest();
     const name = await window.KanbanDialog.prompt({
       title: 'Новая доска',
       value: 'Новая доска',

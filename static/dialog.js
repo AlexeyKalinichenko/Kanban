@@ -5,7 +5,8 @@
 //     → Promise<boolean>  (true — пользователь подтвердил)
 //   KanbanDialog.prompt({ title, message, value, placeholder, confirmLabel, cancelLabel, maxLength })
 //     → Promise<string|null>  (null — отмена)
-//   KanbanDialog.form({ title, message, fields, confirmLabel, cancelLabel, onSubmit })
+//   KanbanDialog.form({ title, message, fields, confirmLabel, cancelLabel, hideCancel, mandatory, noAutofill, onSubmit })
+//     mandatory: окно закрывается только успешной отправкой (без «Отмены», Escape и клика по фону)
 //     fields: [{ name, label, type: 'text'|'password', value, placeholder, maxLength, autocomplete }]
 //     onSubmit(values) → Promise<string|null>: строка — текст ошибки (окно остаётся
 //     открытым), null — успех (окно закрывается).
@@ -134,7 +135,7 @@
     });
   }
 
-  function form({ title, message, fields = [], confirmLabel = 'Сохранить', cancelLabel = 'Отмена', onSubmit }) {
+  function form({ title, message, fields = [], confirmLabel = 'Сохранить', cancelLabel = 'Отмена', hideCancel = false, mandatory = false, noAutofill = false, onSubmit }) {
     return new Promise(resolve => {
       const uid = 'kanban-dialog-' + (++idCounter);
       const previousFocus = document.activeElement;
@@ -142,11 +143,14 @@
       const overlay = document.createElement('div');
       overlay.className = 'confirm-overlay';
 
-      const dialog = document.createElement('form');
+      // noAutofill: окно не похоже на форму входа — без <form>, поля типа
+      // «поиск» с нейтральными именами. Иначе Safari (и менеджеры паролей)
+      // рисуют в поле значок-ключ, даже если это просто имя.
+      const dialog = document.createElement(noAutofill ? 'div' : 'form');
       dialog.className = 'confirm-dialog';
       dialog.setAttribute('role', 'dialog');
       dialog.setAttribute('aria-modal', 'true');
-      dialog.noValidate = true;
+      if (!noAutofill) dialog.noValidate = true;
 
       const titleEl = document.createElement('div');
       titleEl.className = 'confirm-title';
@@ -176,10 +180,24 @@
         inp.type = f.type || 'text';
         inp.className = 'confirm-input';
         inp.name = f.name;
+        if (noAutofill && inp.type === 'text') {
+          inp.type = 'search';
+          inp.name = uid + '-f' + i;
+          inp.autocomplete = 'off';
+          if (!f.label) inp.setAttribute('aria-labelledby', titleEl.id);
+        }
         inp.value = f.value || '';
         inp.placeholder = f.placeholder || '';
         if (f.maxLength) inp.maxLength = f.maxLength;
         if (f.autocomplete) inp.autocomplete = f.autocomplete;
+        if (f.autocomplete === 'off') {
+          // не поле входа: просим менеджеры паролей (Safari/iCloud, 1Password,
+          // LastPass, Bitwarden) не показывать в нём свой значок-ключ
+          inp.setAttribute('data-1p-ignore', '');
+          inp.setAttribute('data-lpignore', 'true');
+          inp.setAttribute('data-bwignore', '');
+          inp.setAttribute('data-form-type', 'other');
+        }
         inp.spellcheck = false;
         inp.autocapitalize = 'off';
         label.appendChild(inp);
@@ -199,16 +217,18 @@
       cancelBtn.className = 'confirm-btn confirm-btn-cancel';
       cancelBtn.textContent = cancelLabel;
       const okBtn = document.createElement('button');
-      okBtn.type = 'submit';
+      okBtn.type = noAutofill ? 'button' : 'submit';
       okBtn.className = 'confirm-btn confirm-btn-primary';
       okBtn.textContent = confirmLabel;
-      buttons.appendChild(cancelBtn);
+      // кнопку «Отмена» можно скрыть — окно всё равно закрывается Escape
+      // или кликом по затемнённому фону
+      if (!hideCancel) buttons.appendChild(cancelBtn);
       buttons.appendChild(okBtn);
       dialog.appendChild(buttons);
       overlay.appendChild(dialog);
       document.body.appendChild(overlay);
 
-      const focusables = [...Object.values(inputs), cancelBtn, okBtn];
+      const focusables = [...Object.values(inputs), ...(hideCancel ? [] : [cancelBtn]), okBtn];
       let busy = false;
 
       function values() {
@@ -252,7 +272,8 @@
         if (e.key === 'Escape') {
           e.preventDefault();
           e.stopPropagation();
-          close(null);
+          // обязательное окно Escape не закрывает
+          if (!mandatory) close(null);
         } else if (e.key === 'Tab') {
           e.preventDefault();
           const i = focusables.indexOf(document.activeElement);
@@ -262,9 +283,19 @@
       }
 
       dialog.addEventListener('submit', (e) => { e.preventDefault(); submit(); });
+      if (noAutofill) {
+        // без <form> Enter и кнопку обрабатываем сами
+        okBtn.addEventListener('click', submit);
+        dialog.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
+            e.preventDefault();
+            submit();
+          }
+        });
+      }
       cancelBtn.onclick = () => close(null);
       overlay.addEventListener('mousedown', (e) => {
-        if (e.target === overlay) close(null);
+        if (e.target === overlay && !mandatory) close(null);
       });
       document.addEventListener('keydown', onKey, true);
 

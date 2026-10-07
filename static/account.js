@@ -1,6 +1,6 @@
 // Аккаунт на стартовой странице: кнопка с логином, меню
 // аккаунта (сменить логин — один раз, задать/сменить пароль, выйти),
-// кнопка «Войти» (в другое пространство) и напоминание
+// кнопка «Войти» (только у гостя) и напоминание
 // задать пароль, пока он не задан.
 (function () {
   const ICONS = {
@@ -34,13 +34,16 @@
     accountBtn.hidden = false;
 
     menu.innerHTML = '';
-    if (account.canRename) addItem(account.guest ? 'Задать логин' : 'Сменить логин', renameDialog);
+    if (account.canRename) addItem(account.guest ? 'Ваше имя' : 'Сменить логин', renameDialog);
     addItem(account.hasPassword ? 'Сменить пароль' : 'Задать пароль', passwordDialog);
     // гостю выходить не из чего — аккаунта ещё нет
     if (!account.guest) addItem('Выйти', logout, true);
 
     // гостю терять нечего — напоминание о пароле показываем, когда аккаунт уже есть
     banner.hidden = account.hasPassword || !!account.guest;
+    // «Войти» — только у гостя; когда аккаунт создан, кнопка пропадает
+    // (войти в другое пространство можно после «Выйти»)
+    loginBtn.hidden = !account.guest;
   }
 
   function addItem(label, action, danger) {
@@ -93,19 +96,25 @@
   });
 
   // --- окна ---
-  function renameDialog() {
+  // Возвращает Promise, который выполняется, когда окно закрыто
+  // (сохранили или закрыли Escape / кликом по фону)
+  function renameDialog(mandatory = false) {
     const guest = !!account.guest;
-    window.KanbanDialog.form({
-      title: guest ? 'Задать логин' : 'Сменить логин',
-      message: (guest
-        ? 'Логин задаётся один раз — после этого изменить его будет нельзя. '
-        : 'Логин можно поменять только один раз — после этого изменить его будет нельзя. ') +
-        account.nameRules,
+    return window.KanbanDialog.form({
+      title: guest ? 'Как вас зовут?' : 'Сменить логин',
+      // у гостя — без пояснения (правила покажутся, если имя не подойдёт)
+      message: guest ? '' :
+        'Логин можно поменять только один раз — после этого изменить его будет нельзя. ' + account.nameRules,
       confirmLabel: guest ? 'Сохранить' : 'Сменить',
-      fields: [{ name: 'name', label: guest ? 'Логин' : 'Новый логин', value: guest ? '' : account.name, maxLength: 30, autocomplete: 'username' }],
-      onSubmit: async ({ name }) => {
-        name = name.trim();
-        if (!name || (!guest && name === account.name)) return 'Введите новый логин.';
+      hideCancel: guest || mandatory,
+      mandatory,
+      noAutofill: guest,
+      // у гостя поле — просто имя, не логин: без значка менеджера паролей (ключа)
+      fields: [{ name: guest ? 'nickname' : 'name', label: guest ? '' : 'Новый логин', value: guest ? '' : account.name, maxLength: 30, autocomplete: guest ? 'off' : 'username' }],
+      onSubmit: async (values) => {
+        const name = (values.nickname ?? values.name ?? '').trim();
+        if (!name) return guest ? 'Введите имя.' : 'Введите новый логин.';
+        if (!guest && name === account.name) return 'Введите новый логин.';
         if (!/^[A-Za-z0-9_-]{3,30}$/.test(name)) return account.nameRules;
         const { ok, data } = await postJson('/api/account/name', { name });
         if (!ok) return data.error || 'Не удалось сменить логин.';
@@ -116,7 +125,15 @@
     });
   }
 
-  function passwordDialog() {
+  // Перед первым действием, которое создаёт аккаунт, спрашиваем у гостя имя
+  // (окно «Как вас зовут?»). Окно обязательное: закрыть его, не введя имя,
+  // нельзя — аккаунт создаётся с этим логином, потом выполняется действие.
+  async function askNameIfGuest() {
+    if (account && account.guest) await renameDialog(true);
+  }
+
+  async function passwordDialog() {
+    await askNameIfGuest();
     const min = account.passwordMin || 6;
     const fields = [];
     if (account.hasPassword) {
@@ -171,19 +188,6 @@
     window.location.href = '/';
   }
 
-  // --- кнопка «Войти» (в другое, существующее пространство) ---
-  loginBtn.addEventListener('click', async (e) => {
-    if (!wouldLoseBoards()) return; // обычный переход по ссылке на /login
-    e.preventDefault();
-    const ok = await window.KanbanDialog.confirm({
-      title: 'Войти в другое пространство?',
-      message: `У пространства «${account.name}» не задан пароль. Если войдёте в другое пространство, вернуться в это и к его доскам будет нельзя.`,
-      confirmLabel: 'Продолжить',
-      danger: false
-    });
-    if (ok) window.location.href = '/login';
-  });
-
   // --- напоминание задать пароль ---
   banner.innerHTML =
     '<span class="password-banner-icon">' + ICONS.lock + '</span>' +
@@ -211,4 +215,7 @@
   }
 
   loadAccount();
+
+  // для других скриптов страницы (start.js: создание доски)
+  window.KanbanAccount = { askNameIfGuest };
 })();
