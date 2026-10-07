@@ -1,5 +1,5 @@
-// Страница входа: вход по логину и паролю,
-// либо создание нового пространства с выбранным логином.
+// Страница входа: вход в существующее пространство по логину и паролю.
+// Открывается кнопкой «Войти» на стартовой странице.
 (function () {
   const ICONS = {
     sun: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
@@ -23,12 +23,6 @@
   const passwordInput = document.getElementById('login-password');
   const submitBtn = document.getElementById('login-submit');
   const errorEl = document.getElementById('login-error');
-  const newForm = document.getElementById('new-form');
-  const newNameInput = document.getElementById('new-name');
-  const newBtn = document.getElementById('new-submit');
-  const newErrorEl = document.getElementById('new-error');
-  const NAME_RE = /^[A-Za-z0-9_-]{3,30}$/;
-
   async function postJson(url, body) {
     const res = await fetch(url, {
       method: 'POST',
@@ -63,30 +57,6 @@
       errorEl.textContent = 'Не удалось связаться с сервером. Попробуйте ещё раз.';
     }
     submitBtn.disabled = false;
-  });
-
-  newForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    newErrorEl.textContent = '';
-    const name = newNameInput.value.trim();
-    if (!NAME_RE.test(name)) {
-      newErrorEl.textContent = 'Логин: от 3 до 30 символов, только латинские буквы, цифры, «-» и «_».';
-      newNameInput.focus();
-      return;
-    }
-    newBtn.disabled = true;
-    try {
-      const { ok, data } = await postJson('/api/account/new', { name });
-      if (ok) {
-        window.location.href = '/';
-        return;
-      }
-      newErrorEl.textContent = data.error || 'Не удалось создать пространство.';
-      newNameInput.select();
-    } catch (err) {
-      newErrorEl.textContent = 'Не удалось связаться с сервером. Попробуйте ещё раз.';
-    }
-    newBtn.disabled = false;
   });
 
   nameInput.focus();

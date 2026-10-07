@@ -1,10 +1,10 @@
 // Если сессия закончилась (вышли из аккаунта на другом устройстве, сменили
 // пароль, удалили cookie), сервер отвечает на запросы к /api/ кодом 401.
-// Тогда переходим на страницу входа. Подключается первым скриптом на
-// стартовой странице и на странице доски.
+// Тогда переходим на стартовую — там создастся новое пространство.
+// Подключается первым скриптом на стартовой странице и на странице доски.
 (function () {
   const originalFetch = window.fetch.bind(window);
-  const PUBLIC = ['/api/login', '/api/account/new'];
+  const PUBLIC = ['/api/login'];
   let redirecting = false;
 
   window.fetch = async function (input, init) {
@@ -14,7 +14,8 @@
       if (url.pathname.startsWith('/api/') && !PUBLIC.includes(url.pathname)) {
         if (!redirecting) {
           redirecting = true;
-          window.location.href = '/login';
+          // без входа сразу создаётся новое пространство
+          window.location.href = '/';
         }
         // дальше страница всё равно уходит — не отдаём ответ, чтобы не
         // показывать ошибок и не перерисовывать пустую доску

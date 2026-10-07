@@ -1,5 +1,6 @@
 // Аккаунт на стартовой странице: кнопка с логином, меню
-// аккаунта (задать/сменить пароль, выйти) и напоминание
+// аккаунта (сменить логин — один раз, задать/сменить пароль, выйти),
+// кнопка «Войти» (в другое пространство) и напоминание
 // задать пароль, пока он не задан.
 (function () {
   const ICONS = {
@@ -11,6 +12,7 @@
   const accountBtn = document.getElementById('account-btn');
   const menu = document.getElementById('account-menu');
   const banner = document.getElementById('password-banner');
+  const loginBtn = document.getElementById('login-btn');
 
   let account = null;
 
@@ -32,10 +34,13 @@
     accountBtn.hidden = false;
 
     menu.innerHTML = '';
+    if (account.canRename) addItem(account.guest ? 'Задать логин' : 'Сменить логин', renameDialog);
     addItem(account.hasPassword ? 'Сменить пароль' : 'Задать пароль', passwordDialog);
-    addItem('Выйти', logout, true);
+    // гостю выходить не из чего — аккаунта ещё нет
+    if (!account.guest) addItem('Выйти', logout, true);
 
-    banner.hidden = account.hasPassword;
+    // гостю терять нечего — напоминание о пароле показываем, когда аккаунт уже есть
+    banner.hidden = account.hasPassword || !!account.guest;
   }
 
   function addItem(label, action, danger) {
@@ -88,6 +93,29 @@
   });
 
   // --- окна ---
+  function renameDialog() {
+    const guest = !!account.guest;
+    window.KanbanDialog.form({
+      title: guest ? 'Задать логин' : 'Сменить логин',
+      message: (guest
+        ? 'Логин задаётся один раз — после этого изменить его будет нельзя. '
+        : 'Логин можно поменять только один раз — после этого изменить его будет нельзя. ') +
+        account.nameRules,
+      confirmLabel: guest ? 'Сохранить' : 'Сменить',
+      fields: [{ name: 'name', label: guest ? 'Логин' : 'Новый логин', value: guest ? '' : account.name, maxLength: 30, autocomplete: 'username' }],
+      onSubmit: async ({ name }) => {
+        name = name.trim();
+        if (!name || (!guest && name === account.name)) return 'Введите новый логин.';
+        if (!/^[A-Za-z0-9_-]{3,30}$/.test(name)) return account.nameRules;
+        const { ok, data } = await postJson('/api/account/name', { name });
+        if (!ok) return data.error || 'Не удалось сменить логин.';
+        account = data;
+        render();
+        return null;
+      }
+    });
+  }
+
   function passwordDialog() {
     const min = account.passwordMin || 6;
     const fields = [];
@@ -101,7 +129,9 @@
       title: account.hasPassword ? 'Сменить пароль' : 'Задать пароль',
       message: account.hasPassword
         ? 'После смены пароля на всех остальных устройствах придётся войти заново.'
-        : `С паролем вы сможете войти под логином «${account.name}» с любого устройства.`,
+        : account.guest
+          ? 'С паролем вы сможете входить в это пространство с любого устройства. Логин создастся автоматически — один раз его можно будет поменять.'
+          : `С паролем вы сможете войти под логином «${account.name}» с любого устройства.`,
       confirmLabel: 'Сохранить',
       fields,
       onSubmit: async ({ current, password, repeat }) => {
@@ -117,8 +147,14 @@
     });
   }
 
+  // Пространство без пароля, но с досками: уйдя из него, вернуться будет нельзя
+  function wouldLoseBoards() {
+    return account && !account.hasPassword &&
+      document.querySelectorAll('.board-tile').length > 0;
+  }
+
   async function logout() {
-    if (!account.hasPassword) {
+    if (wouldLoseBoards()) {
       const ok = await window.KanbanDialog.confirm({
         title: 'Выйти без пароля?',
         message: `У пространства «${account.name}» не задан пароль. После выхода вернуться в него и к его доскам будет нельзя.`,
@@ -131,8 +167,22 @@
     } catch (err) {
       console.error('Не удалось выйти:', err);
     }
-    window.location.href = '/login';
+    // без входа сразу создаётся новое пространство
+    window.location.href = '/';
   }
+
+  // --- кнопка «Войти» (в другое, существующее пространство) ---
+  loginBtn.addEventListener('click', async (e) => {
+    if (!wouldLoseBoards()) return; // обычный переход по ссылке на /login
+    e.preventDefault();
+    const ok = await window.KanbanDialog.confirm({
+      title: 'Войти в другое пространство?',
+      message: `У пространства «${account.name}» не задан пароль. Если войдёте в другое пространство, вернуться в это и к его доскам будет нельзя.`,
+      confirmLabel: 'Продолжить',
+      danger: false
+    });
+    if (ok) window.location.href = '/login';
+  });
 
   // --- напоминание задать пароль ---
   banner.innerHTML =

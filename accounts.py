@@ -1,10 +1,12 @@
 """
 Аккаунты пользователей канбан-доски.
 
-Каждый пользователь — своё пространство досок. Логин пользователь придумывает
-сам при создании пространства (на странице входа); после создания логин не
-меняется. Пароля сначала нет — пользователь задаёт его сам, и только после
-этого может войти в своё пространство с другого устройства.
+Каждый пользователь — своё пространство досок. Аккаунт создаётся не при заходе,
+а при первом изменении (см. app.py, «гость»). Логин генерируется автоматически
+(вида user-4821); пользователь может один раз поменять его на свой, после этого
+логин больше не меняется. Пароля сначала
+нет — пользователь задаёт его сам, и только после этого может войти в своё
+пространство с другого устройства.
 
 Хранение (человекочитаемый текст, как и доски):
 
@@ -16,6 +18,8 @@
 
   USER id=3fa85f64-5717-4562-b3fc-2c963f66afa6
   NAME: alexey
+  RENAMED: 1                      (логин уже меняли — больше менять нельзя;
+                                   строки нет, пока логин автоматический)
   PASSWORD: pbkdf2:sha256:...     (строки нет, пока пароль не задан)
   VER: 1                          (версия сессий: +1 при смене пароля —
                                    все остальные устройства выходят из аккаунта)
@@ -26,6 +30,7 @@
 
 import os
 import re
+import secrets
 import shutil
 import threading
 import uuid
@@ -38,7 +43,8 @@ UUID_RE = re.compile(
 )
 
 # Логин (он же имя пространства): латинские буквы, цифры, «-» и «_», от 3 до 30
-# символов. Уникален без учёта регистра. Задаётся при создании и больше не меняется.
+# символов. Уникален без учёта регистра. Сначала автоматический (user-4821),
+# пользователь может один раз поменять его на свой.
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,30}$")
 NAME_RULES_TEXT = "От 3 до 30 символов: латинские буквы, цифры, «-» и «_»."
 
@@ -91,7 +97,7 @@ class AccountStore:
                 current = None
                 if m and UUID_RE.match(m.group(1)):
                     current = {"id": m.group(1), "name": "", "password": "",
-                               "ver": 1, "created": "", "seen": ""}
+                               "renamed": False, "ver": 1, "created": "", "seen": ""}
             elif line == "ENDUSER":
                 if current and current["name"]:
                     users.append(current)
@@ -104,6 +110,8 @@ class AccountStore:
                     current["name"] = value
                 elif key == "PASSWORD":
                     current["password"] = value
+                elif key == "RENAMED":
+                    current["renamed"] = value not in ("", "0")
                 elif key == "VER":
                     try:
                         current["ver"] = max(1, int(value))
@@ -125,6 +133,8 @@ class AccountStore:
         for u in users:
             lines.append(f"USER id={u['id']}")
             lines.append(f"NAME: {u['name']}")
+            if u.get("renamed"):
+                lines.append("RENAMED: 1")
             if u.get("password"):
                 lines.append(f"PASSWORD: {u['password']}")
             lines.append(f"VER: {u.get('ver', 1)}")
@@ -167,31 +177,63 @@ class AccountStore:
     # Создание аккаунта
     # ------------------------------------------------------------------
 
-    def validate_name(self, name: str):
-        """Возвращает текст ошибки или None, если логин подходит и свободен."""
+    def validate_name(self, name: str, user_id: str = ""):
+        """Возвращает текст ошибки или None, если логин подходит и свободен
+        (свой собственный логин — например, со сменой регистра — не считается занятым)."""
         name = (name or "").strip()
         if not NAME_RE.match(name):
             return NAME_RULES_TEXT
-        if self.find_by_name(name):
+        other = self.find_by_name(name)
+        if other and other["id"] != user_id:
             return "Этот логин уже занят."
         return None
 
-    def create(self, name: str):
-        """Создаёт аккаунт с выбранным логином, без пароля.
-        Возвращает (аккаунт, None) или (None, текст ошибки)."""
+    def create(self, name: str = ""):
+        """Создаёт аккаунт без пароля. Без name — с автоматическим логином вида
+        user-4821; с name — сразу с этим логином (это и есть единственная смена
+        логина). Возвращает (аккаунт, None) или (None, текст ошибки)."""
         name = (name or "").strip()
         with self._lock:
-            error = self.validate_name(name)
-            if error:
-                return None, error
+            if name:
+                error = self.validate_name(name)
+                if error:
+                    return None, error
             users = self._load()
+            taken = {u["name"].lower() for u in users}
+            renamed = bool(name)
+            for attempt in range(0 if name else 200):
+                digits = 4 if attempt < 100 else 6
+                candidate = "user-" + "".join(secrets.choice("0123456789") for _ in range(digits))
+                if candidate not in taken:
+                    name = candidate
+                    break
+            if not name:
+                name = "user-" + secrets.token_hex(4)
             now = _now()
             user = {"id": str(uuid.uuid4()), "name": name, "password": "",
-                    "ver": 1, "created": now, "seen": now}
+                    "renamed": renamed, "ver": 1, "created": now, "seen": now}
             users.append(user)
             self._save(users)
             os.makedirs(self.user_dir(user["id"]), exist_ok=True)
             return dict(user), None
+
+    def rename(self, user_id: str, name: str):
+        """Меняет логин — только один раз. Возвращает текст ошибки или None."""
+        name = (name or "").strip()
+        with self._lock:
+            users = self._load()
+            user = next((u for u in users if u["id"] == user_id), None)
+            if not user:
+                return "Аккаунт не найден."
+            if user.get("renamed"):
+                return "Логин уже меняли — второй раз изменить его нельзя."
+            error = self.validate_name(name, user_id)
+            if error:
+                return error
+            user["name"] = name
+            user["renamed"] = True
+            self._save(users)
+            return None
 
     # ------------------------------------------------------------------
     # Пароль

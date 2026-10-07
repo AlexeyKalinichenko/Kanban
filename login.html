@@ -16,7 +16,7 @@
 <div class="page login-page">
   <div class="header">
     <div class="title">Вход</div>
-    <p class="subtitle">Войдите или создайте новое пространство.</p>
+    <p class="subtitle">Войдите по логину и паролю.</p>
   </div>
 
   <form class="login-card" id="login-form" novalidate>
@@ -35,19 +35,7 @@
     <p class="login-hint">Войти можно только в пространство, для которого задан пароль.</p>
   </form>
 
-  <div class="login-divider"><span>или</span></div>
-
-  <form class="login-card" id="new-form" novalidate>
-    <div class="login-card-title">Новое пространство</div>
-    <label class="login-field">
-      <span class="login-label">Придумайте логин</span>
-      <input class="login-input" id="new-name" name="new-username" type="text"
-             autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="30" required>
-    </label>
-    <p class="login-rules">От 3 до 30 символов: латинские буквы, цифры, «-» и «_». Изменить логин потом будет нельзя.</p>
-    <div class="login-error" id="new-error" role="alert"></div>
-    <button class="login-btn login-btn-secondary" id="new-submit" type="submit">Создать пространство</button>
-  </form>
+  <a class="login-back" id="login-back" href="/">Вернуться к доскам</a>
 </div>
 
 <script src="/static/login.js"></script>

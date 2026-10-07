@@ -308,13 +308,36 @@ svg { display: block; flex-shrink: 0; }
   top: 24px;
   left: 32px;
   z-index: 100;
+  display: flex;
+  gap: 8px;
+}
+
+/* «Войти» — вход в другое, существующее пространство */
+.account-login-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 20px;
+  border-radius: 9999px;
+  border: 1px solid var(--secondary-border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background 0.18s ease;
+}
+
+.account-login-btn:hover {
+  background: var(--hover);
 }
 
 .account-btn {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  max-width: min(320px, calc(100vw - 260px));
+  max-width: min(320px, calc(100vw - 360px));
   height: 44px;
   padding: 0 16px 0 20px;
   border-radius: 9999px;
@@ -449,5 +472,5 @@ svg { display: block; flex-shrink: 0; }
   .theme-toggle-btn { right: 16px; top: 16px; }
   .theme-toggle-btn span { display: none; }
   .theme-toggle-btn { padding: 0 14px; }
-  .account-btn { max-width: calc(100vw - 100px); }
+  .account-btn { max-width: calc(100vw - 190px); }
 }
