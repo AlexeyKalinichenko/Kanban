@@ -11,6 +11,12 @@
 </head>
 <body>
 
+<div class="account">
+  <button id="account-btn" class="account-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="Аккаунт" hidden></button>
+  <div id="account-menu" class="account-menu" role="menu" hidden></div>
+  <a id="login-btn" class="account-login-btn" href="/login" hidden>Войти</a>
+</div>
+
 <button id="theme-toggle" class="theme-toggle-btn" type="button" title="Переключить тему"></button>
 
 <div class="page">
@@ -19,10 +25,15 @@
     <p class="subtitle">Выберите одну или создайте новую.</p>
   </div>
 
+  <div class="password-banner" id="password-banner" hidden></div>
+
   <div class="boards-grid" id="boards-grid"></div>
 </div>
 
+<script src="/static/auth.js"></script>
 <script src="/static/dialog.js"></script>
+<script src="/static/guest.js"></script>
+<script src="/static/account.js"></script>
 <script src="/static/start.js"></script>
 </body>
 </html>

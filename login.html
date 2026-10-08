@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Вход — канбан-доски</title>
+<link rel="stylesheet" href="/static/fonts/nunito.css">
+<link rel="stylesheet" href="/static/start.css">
+<link rel="stylesheet" href="/static/login.css">
+<script src="/static/theme.js"></script>
+</head>
+<body>
+
+<button id="theme-toggle" class="theme-toggle-btn" type="button" title="Переключить тему"></button>
+
+<div class="page login-page">
+  <div class="header">
+    <div class="title">Вход</div>
+    <p class="subtitle">Войдите по логину и паролю.</p>
+  </div>
+
+  <form class="login-card" id="login-form" novalidate>
+    <label class="login-field">
+      <span class="login-label">Логин</span>
+      <input class="login-input" id="login-name" name="username" type="text"
+             autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="30" required>
+    </label>
+    <label class="login-field">
+      <span class="login-label">Пароль</span>
+      <input class="login-input" id="login-password" name="password" type="password"
+             autocomplete="current-password" maxlength="128" required>
+    </label>
+    <div class="login-error" id="login-error" role="alert"></div>
+    <button class="login-btn login-btn-primary" id="login-submit" type="submit">Войти</button>
+  </form>
+
+  <a class="login-back" id="login-back" href="/">Вернуться к доскам</a>
+</div>
+
+<script src="/static/login.js"></script>
+</body>
+</html>

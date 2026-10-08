@@ -1,0 +1,109 @@
+/* Страница входа (login.html). Цвета — токены стартовой страницы (start.css). */
+.login-page {
+  max-width: 400px;
+}
+
+.login-page .header {
+  margin-bottom: 32px;
+}
+
+.login-card {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.login-label {
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: var(--text2);
+}
+
+.login-input {
+  height: 44px;
+  padding: 0 12px;
+  background: var(--page);
+  border: 1px solid var(--secondary-border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+}
+
+.login-input:focus {
+  outline: none;
+  border-color: #5b76fe;
+  box-shadow: 0 0 0 1px #5b76fe;
+}
+
+.login-error {
+  color: #e5484d;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.login-error:empty {
+  display: none;
+}
+
+.login-btn {
+  height: 44px;
+  padding: 0 20px;
+  border-radius: 9999px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s ease, opacity 0.18s ease;
+}
+
+.login-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.login-btn-primary {
+  background: var(--primary-bg);
+  border: 1px solid var(--primary-bg);
+  color: var(--primary-fg);
+}
+
+.login-btn-primary:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.login-back {
+  display: block;
+  margin-top: 24px;
+  text-align: center;
+  color: var(--text2);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.login-back:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.login-back[hidden] {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  body { padding: 88px 16px 32px; }
+  .theme-toggle-btn { right: 16px; top: 16px; }
+  .title { font-size: 36px; }
+}

@@ -13,3 +13,7 @@ venv/
 
 # Board data (local only)
 Data/*.txt
+
+# Accounts (local only): user spaces, session secret
+Data/users/
+Data/secret.key

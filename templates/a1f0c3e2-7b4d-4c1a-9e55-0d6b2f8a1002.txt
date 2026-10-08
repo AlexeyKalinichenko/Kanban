@@ -1,0 +1,68 @@
+# Kanban board data file
+# Формат: TITLE: <название доски>
+#         CREATED: <дата создания> (порядок досок на стартовой странице)
+#         BACKGROUND: <blue|green|purple|red|yellow> (необязательно, без строки — обычный фон)
+#         TAGDEFS ... TAGDEF key=<ключ> color=<цвет> label=<название> ... ENDTAGDEFS
+#         COLUMN: <название> ... CARD priority=<critical|medium|minor> [tags=<ключ1,ключ2,...>] текст ENDCARD ... ENDCOLUMN
+#         Доступные цвета: red, green, yellow, blue, gray, brown, purple, cyan, pink, lime
+TITLE: Пет-проект: трекер привычек
+BACKGROUND: purple
+
+TAGDEFS
+TAGDEF key=front color=cyan label=фронтенд
+TAGDEF key=back color=blue label=бэкенд
+TAGDEF key=design color=pink label=дизайн
+TAGDEF key=bug color=red label=баг
+TAGDEF key=idea color=yellow label=идея
+ENDTAGDEFS
+
+COLUMN: Идеи
+CARD priority=minor tags=idea
+Тёмная тема
+ENDCARD
+CARD priority=minor tags=idea,front
+Виджет на главный экран телефона
+ENDCARD
+CARD priority=minor tags=idea
+Делиться прогрессом с друзьями
+ENDCARD
+ENDCOLUMN
+
+COLUMN: К работе
+CARD priority=critical tags=bug,back
+Серия сбрасывается после полуночи
+**Шаги:**
+• отметить привычку в 23:59
+• открыть приложение в 00:01
+Ожидаемо: серия продолжается
+ENDCARD
+CARD priority=medium tags=design
+Экран статистики
+☐ макет недели
+☐ макет месяца
+☐ календарь-тепловая карта
+ENDCARD
+ENDCOLUMN
+
+COLUMN: В работе
+CARD priority=medium tags=front,back
+Напоминания
+☑ API для расписания
+☑ хранение в базе
+☐ пуш-уведомления
+	☐ iOS
+	☐ Android
+ENDCARD
+CARD priority=medium tags=front
+Онбординг из трёх экранов
+ENDCARD
+ENDCOLUMN
+
+COLUMN: Готово
+CARD priority=medium tags=back
+Регистрация и вход
+ENDCARD
+CARD priority=minor tags=design
+Логотип и иконка приложения
+ENDCARD
+ENDCOLUMN

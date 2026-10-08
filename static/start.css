@@ -301,3 +301,178 @@ svg { display: block; flex-shrink: 0; }
 .board-tile.dragging > * {
   visibility: hidden;
 }
+
+/* --- Аккаунт: кнопка с именем пространства и меню (слева вверху) --- */
+.account {
+  position: fixed;
+  top: 24px;
+  left: 32px;
+  z-index: 100;
+  display: flex;
+  gap: 8px;
+}
+
+/* «Войти» — вход в другое, существующее пространство */
+.account-login-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 20px;
+  border-radius: 9999px;
+  border: 1px solid var(--secondary-border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background 0.18s ease;
+}
+
+.account-login-btn:hover {
+  background: var(--hover);
+}
+
+.account-login-btn[hidden] { display: none; }
+
+.account-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(320px, calc(100vw - 360px));
+  height: 44px;
+  padding: 0 16px 0 20px;
+  border-radius: 9999px;
+  border: 1px solid var(--secondary-border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.18s ease;
+}
+
+.account-btn[hidden] { display: none; }
+
+.account-btn:hover,
+.account-btn[aria-expanded="true"] {
+  background: var(--hover);
+}
+
+.account-btn-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 220px;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+}
+
+.account-menu[hidden] { display: none; }
+
+.account-menu-item {
+  height: 36px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.account-menu-item:hover,
+.account-menu-item:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+
+.account-menu-item-danger {
+  color: #e5484d;
+}
+
+/* --- Напоминание задать пароль --- */
+.password-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: 768px;
+  margin: -16px auto 40px;
+  padding: 16px 20px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-left: 4px solid #fcb900;
+  border-radius: 12px;
+}
+
+.password-banner[hidden] { display: none; }
+
+.password-banner-icon {
+  color: #fcb900;
+  flex-shrink: 0;
+}
+
+.password-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.password-banner-title {
+  font-size: 15px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.password-banner-message {
+  margin-top: 2px;
+  color: var(--text2);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.password-banner-btn {
+  flex-shrink: 0;
+  height: 40px;
+  padding: 0 20px;
+  border-radius: 9999px;
+  border: 1px solid var(--primary-bg);
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.18s ease;
+}
+
+.password-banner-btn:hover {
+  opacity: 0.85;
+}
+
+@media (max-width: 640px) {
+  .password-banner {
+    flex-wrap: wrap;
+  }
+  .password-banner-btn {
+    width: 100%;
+  }
+  .account { left: 16px; top: 16px; }
+  .theme-toggle-btn { right: 16px; top: 16px; }
+  .theme-toggle-btn span { display: none; }
+  .theme-toggle-btn { padding: 0 14px; }
+  .account-btn { max-width: calc(100vw - 190px); }
+}

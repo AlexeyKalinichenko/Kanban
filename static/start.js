@@ -45,6 +45,8 @@ function createAddTile() {
   tile.className = 'add-board-tile';
   tile.innerHTML = '<span class="add-board-pill">' + ICONS.plus + 'Создать доску</span>';
   tile.addEventListener('click', async () => {
+    // гость: создание доски создаёт аккаунт — сначала окно «Как вас зовут?»
+    if (window.KanbanAccount) await window.KanbanAccount.askNameIfGuest();
     const name = await window.KanbanDialog.prompt({
       title: 'Новая доска',
       value: 'Новая доска',
@@ -130,6 +132,8 @@ function createBoardTile(board) {
   deleteBtn.addEventListener('click', async (e) => {
     e.preventDefault();
     e.stopPropagation();
+    // гость: удаление доски создаёт аккаунт — сначала «Как вас зовут?»
+    if (window.KanbanAccount) await window.KanbanAccount.askNameIfGuest();
     const ok = await window.KanbanDialog.confirm({
       title: `Удалить доску «${board.title}»?`,
       message: 'Все столбцы и карточки этой доски будут удалены. Это действие нельзя отменить.',
@@ -232,12 +236,14 @@ boardsGrid.addEventListener('drop', (e) => {
   if (draggedTile) e.preventDefault();
 });
 
-boardsGrid.addEventListener('dragend', () => {
+boardsGrid.addEventListener('dragend', async () => {
   if (!draggedTile) return;
   draggedTile.classList.remove('dragging');
   draggedTile = null;
   const ids = currentOrder();
   if (ids.join(',') === orderBeforeDrag) return; // порядок не изменился
+  // гость: перестановка досок создаёт аккаунт — сначала «Как вас зовут?»
+  if (window.KanbanAccount) await window.KanbanAccount.askNameIfGuest();
   fetch('/api/boards/order', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -1,0 +1,69 @@
+# Kanban board data file
+# Формат: TITLE: <название доски>
+#         CREATED: <дата создания> (порядок досок на стартовой странице)
+#         BACKGROUND: <blue|green|purple|red|yellow> (необязательно, без строки — обычный фон)
+#         TAGDEFS ... TAGDEF key=<ключ> color=<цвет> label=<название> ... ENDTAGDEFS
+#         COLUMN: <название> ... CARD priority=<critical|medium|minor> [tags=<ключ1,ключ2,...>] текст ENDCARD ... ENDCOLUMN
+#         Доступные цвета: red, green, yellow, blue, gray, brown, purple, cyan, pink, lime
+TITLE: Поездка в Грузию
+BACKGROUND: yellow
+
+TAGDEFS
+TAGDEF key=tickets color=blue label=билеты
+TAGDEF key=stay color=brown label=жильё
+TAGDEF key=docs color=gray label=документы
+TAGDEF key=route color=green label=маршрут
+TAGDEF key=food color=lime label=еда
+ENDTAGDEFS
+
+COLUMN: Спланировать
+CARD priority=medium tags=route
+Маршрут на 10 дней
+• Тбилиси — 3 дня
+• Казбеги — 2 дня
+	• Гергети, смотровая
+• Кахетия — 2 дня
+• Батуми — 3 дня
+ENDCARD
+CARD priority=minor tags=food
+Что попробовать
+хинкали, хачапури по-аджарски, **чурчхела**
+ENDCARD
+ENDCOLUMN
+
+COLUMN: Забронировать
+CARD priority=critical tags=tickets
+Авиабилеты туда и обратно
+следить за ценой, бюджет **до 30 000 ₽**
+ENDCARD
+CARD priority=medium tags=stay
+Жильё
+☑ Тбилиси, Старый город
+☐ гостевой дом в Казбеги
+☐ Батуми у моря
+ENDCARD
+CARD priority=medium tags=route,tickets
+Машина напрокат в Кахетии
+ENDCARD
+ENDCOLUMN
+
+COLUMN: Собрать в дорогу
+CARD priority=critical tags=docs
+Документы
+☑ загранпаспорт
+☐ страховка
+☐ распечатать брони
+ENDCARD
+CARD priority=minor
+Вещи
+☐ удобная обувь
+☐ ветровка — в горах холодно
+☐ переходник для розетки
+ENDCARD
+ENDCOLUMN
+
+COLUMN: Готово
+CARD priority=minor tags=docs
+Обменять немного лари
+ENDCARD
+ENDCOLUMN
