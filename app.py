@@ -9,10 +9,11 @@
   подпись — ключом из Data/secret.key, ver — версия сессий пользователя
   (растёт при смене пароля, и все остальные устройства выходят из аккаунта).
 - Без входа (новый посетитель, после выхода, устаревшая cookie) браузер —
-  «гость»: видит пустое пространство, но на сервере ничего не создаётся,
+  «гость»: видит шаблонные доски (папка templates/), но на сервере ничего не создаётся,
   в cookie лежит только одноразовый ключ гостя. Аккаунт (логин вида user-4821,
   без пароля) создаётся при первом изменении: смена логина, пароль, новая
-  доска, сохранение доски или порядка досок. Войти в существующее
+  доска, изменение, удаление или перестановка досок. В новое пространство
+  копируются шаблонные доски. Войти в существующее
   пространство — кнопка «Войти» на стартовой странице → /login.
 
 Страницы:
@@ -42,13 +43,18 @@ API досок (только доски текущего пользовател�
 import os
 import re
 import secrets
+import shutil
 import threading
 import time
 import uuid
 from datetime import datetime, timedelta
 from flask import Flask, Response, g, jsonify, redirect, request, session
 
-from accounts import AccountStore, NAME_RULES_TEXT, PASSWORD_MAX, PASSWORD_MIN
+from accounts import AccountStore, NAME_RULES_TEXT, PASSWORD_MAX, PASSWORD_MIN, VISITS_UNKNOWN
+
+# Напоминание «Задайте пароль, чтобы не потерять доступ» показывается
+# начиная с этого захода в аккаунт (заход — см. accounts.VISIT_GAP_MINUTES)
+PASSWORD_BANNER_FROM_VISIT = 3
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -57,7 +63,23 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "Data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-accounts = AccountStore(DATA_DIR)
+def is_untouched_template_board(path: str, board_id: str) -> bool:
+    """Доска пользователя — нетронутая копия шаблонной с тем же id
+    (сравниваем содержимое, кроме даты создания)."""
+    template = os.path.join(TEMPLATES_DIR, f"{board_id}.txt")
+    try:
+        with open(template, "r", encoding="utf-8") as f:
+            original = parse_board(f.read())
+        with open(path, "r", encoding="utf-8") as f:
+            current = parse_board(f.read())
+    except OSError:
+        return False
+    original["created"] = current["created"] = ""
+    return original == current
+
+
+# функции разбора досок определены ниже — передаём обёртку
+accounts = AccountStore(DATA_DIR, lambda path, board_id: is_untouched_template_board(path, board_id))
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
@@ -133,11 +155,42 @@ def is_valid_board_id(board_id: str) -> bool:
     return bool(UUID_RE.match(board_id or ""))
 
 
+# Шаблонные доски: их видит гость (только чтение), а при создании аккаунта они
+# копируются в новое пространство (с теми же id — id доски уникален только
+# внутри пространства, поэтому ссылка на открытую доску продолжает работать).
+TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+
+
 def user_boards_dir() -> str:
-    """Папка досок текущего пользователя (Data/users/<id>/)."""
+    """Папка досок текущего пользователя (Data/users/<id>/); у гостя — папка
+    шаблонных досок (её только читают: любое изменение сначала создаёт аккаунт)."""
+    if not current_user():
+        return TEMPLATES_DIR
     folder = accounts.user_dir(g.user["id"])
     os.makedirs(folder, exist_ok=True)
     return folder
+
+
+def copy_template_boards(user_id: str) -> None:
+    """Копирует шаблонные доски и их порядок в пространство нового аккаунта.
+    Дата создания — момент копирования (чтобы новые доски шли после них)."""
+    target = accounts.user_dir(user_id)
+    os.makedirs(target, exist_ok=True)
+    try:
+        names = os.listdir(TEMPLATES_DIR)
+    except OSError:
+        return
+    now = datetime.now().isoformat(timespec="seconds")
+    for name in names:
+        src = os.path.join(TEMPLATES_DIR, name)
+        if name == "boards-order.txt":
+            shutil.copyfile(src, os.path.join(target, name))
+        elif name.endswith(".txt") and is_valid_board_id(name[:-4]):
+            with open(src, "r", encoding="utf-8") as f:
+                data = parse_board(f.read())
+            data["created"] = now
+            with open(os.path.join(target, name), "w", encoding="utf-8") as f:
+                f.write(serialize_board(data))
 
 
 def board_file_path(board_id: str) -> str:
@@ -514,6 +567,7 @@ def ensure_user(name: str = ""):
         user, error = accounts.create(name)
         if error:
             return None, json_error(error)
+        copy_template_boards(user["id"])
         add_hit("create", ip)
         _guest_accounts[token] = user["id"]
         start_session(user)
@@ -588,16 +642,20 @@ def index():
         # не вошли (новый посетитель, вышли, cookie устарела) — гость: пустое
         # пространство, аккаунт создастся при первом изменении
         start_guest()
+    else:
+        accounts.register_visit(current_user()["id"])
     return render_page("index.html")
 
 
 @app.route("/board/<board_id>")
 def board_page(board_id):
-    if not current_user():
+    if not current_user() and not session.get("guest"):
         return redirect("/")
     # чужая или удалённая доска — на стартовую страницу своего пространства
     if not is_valid_board_id(board_id) or not os.path.exists(board_file_path(board_id)):
         return redirect("/")
+    if current_user():
+        accounts.register_visit(current_user()["id"])
     return render_page("board.html")
 
 
@@ -619,6 +677,9 @@ def account_json(user: dict):
         "canRename": not user.get("renamed"),
         "nameRules": NAME_RULES_TEXT,
         "passwordMin": PASSWORD_MIN,
+        # напоминание «Задайте пароль…» — начиная с этого захода в аккаунт
+        "visits": user.get("visits", VISITS_UNKNOWN),
+        "passwordBannerFrom": PASSWORD_BANNER_FROM_VISIT,
     })
 
 
@@ -721,12 +782,7 @@ def logout():
 
 @app.route("/api/boards", methods=["GET"])
 def list_boards():
-    if not current_user():
-        # у гостя досок нет
-        response = jsonify({"boards": []})
-        response.headers["Cache-Control"] = "no-store"
-        return response
-    folder = user_boards_dir()
+    folder = user_boards_dir()  # у гостя — шаблонные доски
     boards = []
     for filename in os.listdir(folder):
         if not filename.endswith(".txt"):
@@ -800,8 +856,12 @@ def create_board():
 def delete_board(board_id):
     if not is_valid_board_id(board_id):
         return jsonify({"error": "invalid id"}), 400
-    if not current_user():
-        return jsonify({"error": "not found"}), 404
+    if not os.path.exists(board_file_path(board_id)):
+        return jsonify({"status": "ok"})
+    # гость: удаление шаблонной доски — изменение, сначала создаётся аккаунт
+    user, error_response = ensure_user()
+    if error_response:
+        return error_response
     path = board_file_path(board_id)
     if os.path.exists(path):
         os.remove(path)
@@ -817,9 +877,10 @@ def save_boards_order():
     ids = payload.get("ids")
     if not isinstance(ids, list):
         return jsonify({"error": "ids must be a list"}), 400
-    if not current_user():
-        # у гостя нет досок — нечего упорядочивать
-        return jsonify({"status": "ok"})
+    # гость: перестановка досок — изменение, сначала создаётся аккаунт
+    user, error_response = ensure_user()
+    if error_response:
+        return error_response
     # сохраняем только существующие доски
     ids = [i for i in ids if is_valid_board_id(str(i)) and os.path.exists(board_file_path(str(i)))]
     write_board_order(ids)
@@ -834,8 +895,6 @@ def save_boards_order():
 def get_board(board_id):
     if not is_valid_board_id(board_id):
         return jsonify({"error": "invalid id"}), 400
-    if not current_user():
-        return jsonify({"error": "not found"}), 404
     path = board_file_path(board_id)
     if not os.path.exists(path):
         # доски нет в пространстве этого пользователя (удалена или чужая)
@@ -850,9 +909,13 @@ def save_board(board_id):
     if not is_valid_board_id(board_id):
         return jsonify({"error": "invalid id"}), 400
     if not current_user():
-        # у гостя пока нет досок (дефолтная доска гостя появится позже: её
-        # сохранение будет создавать аккаунт через ensure_user())
-        return jsonify({"error": "not found"}), 404
+        # гость: сохранение шаблонной доски — первое изменение, создаём аккаунт
+        # (шаблоны копируются в него с теми же id) и сохраняем уже его копию
+        if not os.path.exists(board_file_path(board_id)):
+            return jsonify({"error": "not found"}), 404
+        user, error_response = ensure_user()
+        if error_response:
+            return error_response
     payload = request.get_json(force=True, silent=True) or {}
     path = board_file_path(board_id)
     # Дату создания хранит только сервер: браузер её не присылает,

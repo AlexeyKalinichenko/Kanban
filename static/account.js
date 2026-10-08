@@ -29,6 +29,7 @@
 
   function render() {
     if (!account) return;
+    if (window.KanbanGuest) window.KanbanGuest.setAccount(account);
     accountBtn.innerHTML = ICONS.user + '<span class="account-btn-name"></span>' + ICONS.chevron;
     accountBtn.querySelector('.account-btn-name').textContent = account.name;
     accountBtn.hidden = false;
@@ -40,7 +41,9 @@
     if (!account.guest) addItem('Выйти', logout, true);
 
     // гостю терять нечего — напоминание о пароле показываем, когда аккаунт уже есть
-    banner.hidden = account.hasPassword || !!account.guest;
+    // и не сразу: только начиная с третьего захода в аккаунт
+    banner.hidden = account.hasPassword || !!account.guest ||
+      (account.visits || 0) < (account.passwordBannerFrom || 3);
     // «Войти» — только у гостя; когда аккаунт создан, кнопка пропадает
     // (войти в другое пространство можно после «Выйти»)
     loginBtn.hidden = !account.guest;
@@ -98,16 +101,15 @@
   // --- окна ---
   // Возвращает Promise, который выполняется, когда окно закрыто
   // (сохранили или закрыли Escape / кликом по фону)
-  function renameDialog(mandatory = false) {
+  function renameDialog() {
     const guest = !!account.guest;
     return window.KanbanDialog.form({
-      title: guest ? 'Как вас зовут?' : 'Сменить логин',
+      title: guest ? 'Придумайте себе уникальное имя' : 'Сменить логин',
       // у гостя — без пояснения (правила покажутся, если имя не подойдёт)
       message: guest ? '' :
         'Логин можно поменять только один раз — после этого изменить его будет нельзя. ' + account.nameRules,
       confirmLabel: guest ? 'Сохранить' : 'Сменить',
-      hideCancel: guest || mandatory,
-      mandatory,
+      hideCancel: guest,
       noAutofill: guest,
       // у гостя поле — просто имя, не логин: без значка менеджера паролей (ключа)
       fields: [{ name: guest ? 'nickname' : 'name', label: guest ? '' : 'Новый логин', value: guest ? '' : account.name, maxLength: 30, autocomplete: guest ? 'off' : 'username' }],
@@ -115,7 +117,7 @@
         const name = (values.nickname ?? values.name ?? '').trim();
         if (!name) return guest ? 'Введите имя.' : 'Введите новый логин.';
         if (!guest && name === account.name) return 'Введите новый логин.';
-        if (!/^[A-Za-z0-9_-]{3,30}$/.test(name)) return account.nameRules;
+        if (!/^[A-Za-zА-Яа-яЁё0-9_-]{3,30}$/.test(name.normalize('NFC'))) return account.nameRules;
         const { ok, data } = await postJson('/api/account/name', { name });
         if (!ok) return data.error || 'Не удалось сменить логин.';
         account = data;
@@ -129,7 +131,13 @@
   // (окно «Как вас зовут?»). Окно обязательное: закрыть его, не введя имя,
   // нельзя — аккаунт создаётся с этим логином, потом выполняется действие.
   async function askNameIfGuest() {
-    if (account && account.guest) await renameDialog(true);
+    if (account && account.guest && window.KanbanGuest) {
+      const fresh = await window.KanbanGuest.ensureNamed();
+      if (fresh) {
+        account = fresh;
+        render();
+      }
+    }
   }
 
   async function passwordDialog() {

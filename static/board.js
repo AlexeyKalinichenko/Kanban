@@ -1561,8 +1561,28 @@
     });
   }
 
+  // Гость: первое изменение доски создаёт аккаунт — сначала обязательное окно
+  // «Как вас зовут?» (static/guest.js), затем сохранение. Пока окно открыто,
+  // изменения копятся; сохраняется последнее состояние доски.
+  let accountReady = !window.KanbanGuest;
+  let accountGate = null;
+
   function saveBoard() {
     recolorColumnDots();
+    if (accountReady) {
+      sendBoard();
+      return;
+    }
+    if (!accountGate) {
+      accountGate = window.KanbanGuest.ensureNamed().then(() => {
+        accountReady = true;
+        accountGate = null;
+        sendBoard();
+      });
+    }
+  }
+
+  function sendBoard() {
     fetch(BOARD_API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

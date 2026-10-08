@@ -1,0 +1,65 @@
+# Kanban board data file
+# Формат: TITLE: <название доски>
+#         CREATED: <дата создания> (порядок досок на стартовой странице)
+#         BACKGROUND: <blue|green|purple|red|yellow> (необязательно, без строки — обычный фон)
+#         TAGDEFS ... TAGDEF key=<ключ> color=<цвет> label=<название> ... ENDTAGDEFS
+#         COLUMN: <название> ... CARD priority=<critical|medium|minor> [tags=<ключ1,ключ2,...>] текст ENDCARD ... ENDCOLUMN
+#         Доступные цвета: red, green, yellow, blue, gray, brown, purple, cyan, pink, lime
+TITLE: Дом
+BACKGROUND: green
+
+TAGDEFS
+TAGDEF key=buy color=blue label=покупки
+TAGDEF key=repair color=brown label=ремонт
+TAGDEF key=family color=pink label=семья
+TAGDEF key=urgent color=red label=срочно
+TAGDEF key=money color=lime label=деньги
+TAGDEF key=mark color=gray label=
+ENDTAGDEFS
+
+COLUMN: Надо сделать
+CARD priority=critical tags=urgent,money
+Оплатить коммуналку
+до **25 числа**, иначе пени
+ENDCARD
+CARD priority=medium tags=buy
+Список покупок на неделю
+☐ молоко, яйца, сыр
+☐ овощи для супа
+☐ корм для кота
+☑ хлеб
+ENDCARD
+CARD priority=medium tags=repair
+Починить кран на кухне
+• купить картридж
+	• модель смотреть на смесителе
+• перекрыть воду
+• заменить и проверить
+ENDCARD
+CARD priority=minor tags=family,mark
+Позвонить бабушке в воскресенье
+ENDCARD
+ENDCOLUMN
+
+COLUMN: В процессе
+CARD priority=medium tags=repair,money
+Покраска балкона
+☑ выбрать цвет
+☑ купить краску и валик
+☐ снять старую краску
+☐ покрасить в **два слоя**
+ENDCARD
+CARD priority=minor tags=family
+Разобрать детские вещи
+что мало — отдать соседям
+ENDCARD
+ENDCOLUMN
+
+COLUMN: Готово
+CARD priority=medium tags=buy
+Заказать новый пылесос
+ENDCARD
+CARD priority=minor
+Записаться к стоматологу
+ENDCARD
+ENDCOLUMN
