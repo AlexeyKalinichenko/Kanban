@@ -192,6 +192,41 @@
     box-shadow: inset 0 0 0 2px var(--link);
   }
 
+  /* Телефоны: поля страницы меньше, столбец чуть уже экрана — справа виден
+     краешек соседнего столбца, чтобы было понятно, что доску можно листать вбок.
+     При пролистывании столбец мягко «прилипает» к левому краю. */
+  @media (max-width: 600px) {
+    body {
+      padding: 16px 16px 12px;
+    }
+
+    .top-bar {
+      margin-bottom: 16px;
+    }
+
+    /* название доски — мельче и на всю ширину между кнопками «назад» и «фон»
+       (по 44px + отступ), чтобы длинные названия не обрезались */
+    .board-title-input {
+      font-size: 18px;
+      width: calc(100% - 104px);
+      padding: 4px 6px;
+      /* если и с уменьшенным шрифтом (static/board.js) не влезло — многоточие */
+      text-overflow: ellipsis;
+    }
+
+    .board {
+      gap: 12px;
+      scroll-snap-type: x proximity;
+      scroll-padding-left: 2px;
+    }
+
+    .column {
+      width: calc(100vw - 72px);
+      max-width: 304px;
+      scroll-snap-align: start;
+    }
+  }
+
   .column.column-dragging {
     opacity: 0.4;
   }
@@ -477,6 +512,17 @@
 
   .card-tag-remove:hover {
     background: rgba(0,0,0,0.25);
+  }
+
+  /* на сенсорных экранах наведения нет — крестик на теге виден всегда,
+     и он чуть крупнее, чтобы по нему было удобно попасть пальцем */
+  @media (hover: none) {
+    .card-tag-remove {
+      display: inline-flex;
+      width: 18px;
+      height: 18px;
+      font-size: 12px;
+    }
   }
 
   .card-actions {

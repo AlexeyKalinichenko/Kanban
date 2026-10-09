@@ -180,6 +180,13 @@ svg { display: block; flex-shrink: 0; }
   opacity: 1;
 }
 
+/* на сенсорных экранах наведения нет — крестик удаления доски виден всегда */
+@media (hover: none) {
+  .board-tile-delete {
+    opacity: 1;
+  }
+}
+
 .board-tile-delete:hover {
   background: var(--hover);
   color: var(--text);

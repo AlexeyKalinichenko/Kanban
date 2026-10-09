@@ -1611,6 +1611,7 @@
       if (data.title) {
         boardTitleInput.value = data.title;
       }
+      fitBoardTitle();
       // цвет фона доски (пустая строка — обычный фон)
       if (window.KanbanBoardBg) {
         window.KanbanBoardBg.apply(data.background || '');
@@ -1631,6 +1632,24 @@
   }
 
   boardTitleInput.addEventListener('change', () => saveBoard());
+
+  // Название доски на узком экране (телефон): поле однострочное, поэтому если
+  // название не помещается, уменьшаем шрифт — но не меньше 14px. На широком
+  // экране размер шрифта задаёт CSS.
+  const TITLE_MIN_FONT = 14;
+  function fitBoardTitle() {
+    boardTitleInput.style.fontSize = '';
+    if (!window.matchMedia('(max-width: 600px)').matches) return;
+    let size = parseFloat(getComputedStyle(boardTitleInput).fontSize);
+    while (size > TITLE_MIN_FONT && boardTitleInput.scrollWidth > boardTitleInput.clientWidth) {
+      size -= 1;
+      boardTitleInput.style.fontSize = size + 'px';
+    }
+  }
+  boardTitleInput.addEventListener('input', fitBoardTitle);
+  window.addEventListener('resize', fitBoardTitle);
+  // шрифт Nunito может догрузиться позже — тогда ширина текста меняется
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitBoardTitle);
 
   // смена цвета фона в палитре — сохраняем доску
   if (window.KanbanBoardBg) {
