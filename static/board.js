@@ -35,6 +35,11 @@
     tag: svg('<path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/>'),
     list: svg('<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none"/>'),
     checkbox: svg('<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M8 12.5l3 3 5-6"/>'),
+    move: svg('<path d="M4 8h14l-4-4M20 16H6l4 4"/>'),
+    arrowUp: svg('<path d="M12 19V5M6 11l6-6 6 6"/>', 16),
+    arrowDown: svg('<path d="M12 5v14M6 13l6 6 6-6"/>', 16),
+    arrowLeft: svg('<path d="M19 12H5M11 6l-6 6 6 6"/>', 16),
+    arrowRight: svg('<path d="M5 12h14M13 6l6 6-6 6"/>', 16),
     grip: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>'
   };
 
@@ -56,6 +61,34 @@
 
   function nextDotColor() {
     return dotColors[(columnIdCounter - 1) % dotColors.length];
+  }
+
+  // Пункт меню «сдвинуть» (Выше/Ниже/Влево/Вправо) — для сенсорных экранов,
+  // где перетаскивание не работает. disabled — если двигать некуда.
+  function makeShiftItem(icon, label, disabled, onPick) {
+    const opt = document.createElement('button');
+    opt.type = 'button';
+    opt.className = 'card-menu-item card-menu-shift-option';
+    opt.innerHTML = icon;
+    const text = document.createElement('span');
+    text.className = 'card-menu-item-label';
+    text.textContent = label;
+    opt.appendChild(text);
+    opt.disabled = disabled;
+    opt.onclick = (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.card-menu.open').forEach(m => m.classList.remove('open'));
+      if (!disabled) onPick();
+    };
+    return opt;
+  }
+
+  // Короткая подсветка элемента, который только что сдвинули
+  function flashMoved(elem) {
+    elem.classList.remove('card-moved');
+    void elem.offsetWidth;
+    elem.classList.add('card-moved');
+    setTimeout(() => elem.classList.remove('card-moved'), 1200);
   }
 
   function updateColumnCount(columnEl) {
@@ -976,6 +1009,104 @@
       }
       editArea.addEventListener('input', normalizeEditor);
 
+      // --- Свайп по строке на сенсорном экране (как в Заметках на iPhone):
+      // вправо — строка сдвигается на один отступ, влево — отступ убирается.
+      // Работает только во время редактирования. Горизонтальную прокрутку
+      // доски внутри редактора отключает CSS (touch-action: pan-y), поэтому
+      // горизонтальное движение пальца целиком достаётся жесту.
+      const SWIPE_MIN_DX = 40;   // минимальная длина свайпа по горизонтали, px
+      const SWIPE_MAX_DY = 30;   // допустимое смещение по вертикали, px
+      let swipe = null;
+
+      function plainCaret() {
+        const sel = window.getSelection();
+        if (!sel.rangeCount || !editArea.contains(sel.anchorNode)) return null;
+        const range = sel.getRangeAt(0);
+        const upTo = (container, offset) => {
+          const r = document.createRange();
+          r.setStart(editArea, 0);
+          r.setEnd(container, offset);
+          return editorNodesToRaw(r.cloneContents(), { plain: true, keepTrailingBreak: true }).length;
+        };
+        return [upTo(range.startContainer, range.startOffset), upTo(range.endContainer, range.endOffset)];
+      }
+
+      // dir: +1 — добавить отступ, -1 — убрать (табуляцию или до 4 пробелов)
+      function shiftEditorLine(lineIndex, dir) {
+        const raw = editorNodesToRaw(editArea);
+        const lines = raw.split('\n');
+        if (lineIndex < 0 || lineIndex >= lines.length) return false;
+        const plainLines = editorNodesToRaw(editArea, { plain: true }).split('\n');
+        let lineStart = 0;
+        for (let i = 0; i < lineIndex; i++) lineStart += (plainLines[i] || '').length + 1;
+        let delta = 0;
+        if (dir > 0) {
+          lines[lineIndex] = '\t' + lines[lineIndex];
+          delta = 1;
+        } else {
+          const line = lines[lineIndex];
+          let remove = 0;
+          if (line.startsWith('\t')) remove = 1;
+          else remove = Math.min(4, line.match(/^ */)[0].length);
+          if (!remove) return false;
+          lines[lineIndex] = line.slice(remove);
+          delta = -remove;
+        }
+        const caret = plainCaret();
+        fillEditorFromRaw(editArea, lines.join('\n'));
+        if (caret) {
+          // позиции после начала сдвинутой строки смещаются на добавленный/убранный отступ
+          const move = (pos) => (pos > lineStart ? Math.max(lineStart, pos + delta) : pos);
+          selectPlainRange(move(caret[0]), move(caret[1]));
+        }
+        // короткое «покачивание» строки — видно, что жест сработал
+        const lineEl = editArea.children[lineIndex];
+        if (lineEl) {
+          lineEl.classList.remove('swipe-shift-right', 'swipe-shift-left');
+          void lineEl.offsetWidth;
+          lineEl.classList.add(dir > 0 ? 'swipe-shift-right' : 'swipe-shift-left');
+          setTimeout(() => lineEl.classList.remove('swipe-shift-right', 'swipe-shift-left'), 260);
+        }
+        return true;
+      }
+
+      editArea.addEventListener('touchstart', (e) => {
+        if (e.touches.length !== 1) { swipe = null; return; }
+        let lineEl = e.target.nodeType === 1 ? e.target : e.target.parentElement;
+        while (lineEl && lineEl.parentElement !== editArea) lineEl = lineEl.parentElement;
+        const t = e.touches[0];
+        swipe = {
+          x: t.clientX, y: t.clientY,
+          line: lineEl ? Array.from(editArea.children).indexOf(lineEl) : -1,
+          active: false
+        };
+      }, { passive: true });
+
+      editArea.addEventListener('touchmove', (e) => {
+        if (!swipe) return;
+        const t = e.touches[0];
+        const dx = t.clientX - swipe.x;
+        const dy = t.clientY - swipe.y;
+        if (Math.abs(dy) > SWIPE_MAX_DY) { swipe = null; return; }
+        if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+          swipe.active = true;
+          e.preventDefault(); // не выделять текст, пока палец ведёт строку
+        }
+      }, { passive: false });
+
+      editArea.addEventListener('touchend', (e) => {
+        const s = swipe;
+        swipe = null;
+        if (!s || !s.active || s.line < 0) return;
+        const t = e.changedTouches[0];
+        const dx = t.clientX - s.x;
+        if (Math.abs(dx) < SWIPE_MIN_DX || Math.abs(t.clientY - s.y) > SWIPE_MAX_DY) return;
+        e.preventDefault(); // не ставить курсор туда, где палец отпустили
+        shiftEditorLine(s.line, dx > 0 ? 1 : -1);
+      }, { passive: false });
+
+      editArea.addEventListener('touchcancel', () => { swipe = null; });
+
       // вставка из буфера — только как простой текст (без чужого оформления)
       editArea.addEventListener('paste', (e) => {
         e.preventDefault();
@@ -1191,11 +1322,109 @@
     menuWrapper.appendChild(tagBtn);
     menuWrapper.appendChild(menu);
 
-    // Кнопки справа в шапке карточки: редактировать, теги, удалить
+    // --- «Переместить в…» (только на сенсорных экранах — там не работает
+    // перетаскивание мышью): меню со списком остальных столбцов доски,
+    // карточка переносится в конец выбранного столбца ---
+    const moveWrapper = document.createElement('div');
+    moveWrapper.className = 'card-menu-wrapper card-move-wrapper';
+
+    const moveBtn = document.createElement('button');
+    moveBtn.type = 'button';
+    moveBtn.className = 'card-menu-btn card-move-btn';
+    moveBtn.innerHTML = ICONS.move;
+    moveBtn.title = 'Переместить';
+    moveBtn.setAttribute('aria-label', 'Переместить карточку');
+
+    const moveMenu = document.createElement('div');
+    moveMenu.className = 'card-menu card-move-menu';
+
+    function renderMoveMenu() {
+      moveMenu.innerHTML = '';
+      // порядок внутри столбца
+      const prevCard = el.previousElementSibling;
+      const nextCard = el.nextElementSibling;
+      moveMenu.appendChild(makeShiftItem(ICONS.arrowUp, 'Выше', !prevCard, () => {
+        el.parentElement.insertBefore(el, prevCard);
+        saveBoard();
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        flashMoved(el);
+      }));
+      moveMenu.appendChild(makeShiftItem(ICONS.arrowDown, 'Ниже', !nextCard, () => {
+        el.parentElement.insertBefore(el, nextCard.nextElementSibling);
+        saveBoard();
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        flashMoved(el);
+      }));
+      const sep = document.createElement('div');
+      sep.className = 'card-menu-sep';
+      moveMenu.appendChild(sep);
+
+      const heading = document.createElement('div');
+      heading.className = 'card-menu-color-heading';
+      heading.textContent = 'Переместить в';
+      moveMenu.appendChild(heading);
+
+      const currentColumn = el.closest('.column');
+      const columns = Array.from(board.querySelectorAll(':scope > .column'));
+      const targets = columns.filter(c => c !== currentColumn);
+      if (!targets.length) {
+        const empty = document.createElement('div');
+        empty.className = 'card-menu-empty';
+        empty.textContent = 'На доске нет других столбцов';
+        moveMenu.appendChild(empty);
+        return;
+      }
+      targets.forEach(columnEl => {
+        const opt = document.createElement('button');
+        opt.type = 'button';
+        opt.className = 'card-menu-item card-menu-move-option';
+        const dot = document.createElement('span');
+        dot.className = 'card-menu-move-dot';
+        const colDot = columnEl.querySelector('.column-title .dot');
+        if (colDot) dot.style.background = colDot.style.background;
+        const label = document.createElement('span');
+        label.className = 'card-menu-item-label';
+        const titleInput = columnEl.querySelector('.column-title-input');
+        label.textContent = (titleInput && titleInput.value.trim()) || 'Без названия';
+        opt.appendChild(dot);
+        opt.appendChild(label);
+        opt.onclick = (e) => {
+          e.stopPropagation();
+          moveMenu.classList.remove('open');
+          const fromColumn = el.closest('.column');
+          columnEl.querySelector('.cards').appendChild(el);
+          if (fromColumn) updateColumnCount(fromColumn);
+          updateColumnCount(columnEl);
+          saveBoard();
+          // показываем, куда уехала карточка
+          columnEl.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' });
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          flashMoved(el);
+        };
+        moveMenu.appendChild(opt);
+      });
+    }
+
+    moveBtn.onclick = (e) => {
+      e.stopPropagation();
+      const isOpen = moveMenu.classList.contains('open');
+      document.querySelectorAll('.card-menu.open').forEach(m => m.classList.remove('open'));
+      if (!isOpen) {
+        renderMoveMenu();
+        moveMenu.classList.add('open');
+      }
+    };
+
+    moveWrapper.appendChild(moveBtn);
+    moveWrapper.appendChild(moveMenu);
+
+    // Кнопки справа в шапке карточки: редактировать, теги, переместить
+    // (только на сенсорных экранах), удалить
     const actions = document.createElement('div');
     actions.className = 'card-actions';
     actions.appendChild(editBtn);
     actions.appendChild(menuWrapper);
+    actions.appendChild(moveWrapper);
     actions.appendChild(delBtn);
 
     // --- Меню приоритета: открывается кликом по самой плашке приоритета ---
@@ -1419,7 +1648,42 @@
     titleInput.title = 'Название столбца';
     titleInput.addEventListener('change', () => saveBoard());
 
-    titleWrap.appendChild(dragHandle);
+    // На сенсорных экранах (там нет перетаскивания мышью) нажатие на ручку ⠿
+    // открывает меню «Влево / Вправо» — сдвинуть столбец на одно место.
+    const handleWrap = document.createElement('div');
+    handleWrap.className = 'card-menu-wrapper column-move-wrapper';
+    const columnMenu = document.createElement('div');
+    columnMenu.className = 'card-menu column-move-menu';
+    handleWrap.appendChild(dragHandle);
+    handleWrap.appendChild(columnMenu);
+
+    function shiftColumn(dir) {
+      const columns = Array.from(board.querySelectorAll(':scope > .column'));
+      const i = columns.indexOf(columnEl);
+      const target = columns[i + dir];
+      if (!target) return;
+      if (dir < 0) board.insertBefore(columnEl, target);
+      else board.insertBefore(columnEl, target.nextElementSibling);
+      saveBoard(); // заодно перекрашивает точки столбцов по новому порядку
+      columnEl.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' });
+      flashMoved(columnEl);
+    }
+
+    dragHandle.addEventListener('click', (e) => {
+      if (!window.matchMedia('(hover: none)').matches) return;
+      e.stopPropagation();
+      const isOpen = columnMenu.classList.contains('open');
+      document.querySelectorAll('.card-menu.open').forEach(m => m.classList.remove('open'));
+      if (isOpen) return;
+      const columns = Array.from(board.querySelectorAll(':scope > .column'));
+      const i = columns.indexOf(columnEl);
+      columnMenu.innerHTML = '';
+      columnMenu.appendChild(makeShiftItem(ICONS.arrowLeft, 'Влево', i <= 0, () => shiftColumn(-1)));
+      columnMenu.appendChild(makeShiftItem(ICONS.arrowRight, 'Вправо', i >= columns.length - 1, () => shiftColumn(1)));
+      columnMenu.classList.add('open');
+    });
+
+    titleWrap.appendChild(handleWrap);
     titleWrap.appendChild(dot);
     titleWrap.appendChild(titleInput);
 
@@ -1611,6 +1875,7 @@
       if (data.title) {
         boardTitleInput.value = data.title;
       }
+      fitBoardTitle();
       // цвет фона доски (пустая строка — обычный фон)
       if (window.KanbanBoardBg) {
         window.KanbanBoardBg.apply(data.background || '');
@@ -1631,6 +1896,24 @@
   }
 
   boardTitleInput.addEventListener('change', () => saveBoard());
+
+  // Название доски на узком экране (телефон): поле однострочное, поэтому если
+  // название не помещается, уменьшаем шрифт — но не меньше 14px. На широком
+  // экране размер шрифта задаёт CSS.
+  const TITLE_MIN_FONT = 14;
+  function fitBoardTitle() {
+    boardTitleInput.style.fontSize = '';
+    if (!window.matchMedia('(max-width: 600px)').matches) return;
+    let size = parseFloat(getComputedStyle(boardTitleInput).fontSize);
+    while (size > TITLE_MIN_FONT && boardTitleInput.scrollWidth > boardTitleInput.clientWidth) {
+      size -= 1;
+      boardTitleInput.style.fontSize = size + 'px';
+    }
+  }
+  boardTitleInput.addEventListener('input', fitBoardTitle);
+  window.addEventListener('resize', fitBoardTitle);
+  // шрифт Nunito может догрузиться позже — тогда ширина текста меняется
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitBoardTitle);
 
   // смена цвета фона в палитре — сохраняем доску
   if (window.KanbanBoardBg) {
