@@ -11,7 +11,12 @@ const ICONS = {
   sun: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
   moon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
   close: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
-  plus: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>'
+  plus: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  move: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h14l-4-4M20 16H6l4 4"/></svg>',
+  arrowUp: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
+  arrowDown: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
+  arrowLeft: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>',
+  arrowRight: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'
 };
 
 // Цвета отрезков полоски на плитке — те же, что у точек в заголовках столбцов доски
@@ -149,14 +154,104 @@ function createBoardTile(board) {
     }
   });
 
+  // «Переместить» — только на сенсорных экранах (там не работает перетаскивание
+  // мышью): меню «Выше / Ниже» (или «Левее / Правее», если плитки стоят в ряд)
+  const moveWrap = document.createElement('div');
+  moveWrap.className = 'board-tile-move-wrap';
+  const moveBtn = document.createElement('button');
+  moveBtn.type = 'button';
+  moveBtn.className = 'board-tile-move';
+  moveBtn.innerHTML = ICONS.move;
+  moveBtn.title = 'Переместить';
+  moveBtn.setAttribute('aria-label', 'Переместить доску');
+  const moveMenu = document.createElement('div');
+  moveMenu.className = 'tile-menu';
+  moveMenu.hidden = true;
+  moveWrap.appendChild(moveBtn);
+  moveWrap.appendChild(moveMenu);
+
+  function tileItem(icon, label, disabled, onPick) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'tile-menu-item';
+    item.innerHTML = icon + '<span></span>';
+    item.lastChild.textContent = label;
+    item.disabled = disabled;
+    item.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeTileMenus();
+      if (!disabled) onPick();
+    });
+    return item;
+  }
+
+  moveBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const wasOpen = !moveMenu.hidden;
+    closeTileMenus();
+    if (wasOpen) return;
+    const prev = tile.previousElementSibling;
+    const next = tile.nextElementSibling && tile.nextElementSibling.classList.contains('board-tile')
+      ? tile.nextElementSibling : null;
+    const top = tile.getBoundingClientRect().top;
+    const sameRow = (other) => other && Math.abs(other.getBoundingClientRect().top - top) < 5;
+    moveMenu.innerHTML = '';
+    moveMenu.appendChild(tileItem(sameRow(prev) ? ICONS.arrowLeft : ICONS.arrowUp,
+      sameRow(prev) ? 'Левее' : 'Выше', !prev, () => {
+        boardsGrid.insertBefore(tile, prev);
+        afterTileShift(tile);
+      }));
+    moveMenu.appendChild(tileItem(sameRow(next) ? ICONS.arrowRight : ICONS.arrowDown,
+      sameRow(next) ? 'Правее' : 'Ниже', !next, () => {
+        boardsGrid.insertBefore(tile, next.nextElementSibling);
+        afterTileShift(tile);
+      }));
+    moveMenu.hidden = false;
+  });
+
   const head = document.createElement('div');
   head.className = 'board-tile-head';
   head.appendChild(title);
+  head.appendChild(moveWrap);
   head.appendChild(deleteBtn);
 
   tile.appendChild(head);
   tile.appendChild(meta);
   return tile;
+}
+
+function closeTileMenus() {
+  document.querySelectorAll('.tile-menu').forEach(m => { m.hidden = true; });
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.board-tile-move-wrap')) closeTileMenus();
+});
+
+// Плитку сдвинули кнопкой «Переместить»: сохраняем порядок и подсвечиваем её
+async function afterTileShift(tile) {
+  tile.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  tile.classList.remove('tile-moved');
+  void tile.offsetWidth;
+  tile.classList.add('tile-moved');
+  setTimeout(() => tile.classList.remove('tile-moved'), 1200);
+  await saveBoardsOrder(currentOrder());
+}
+
+// Сохранить порядок досок (гостю перестановка создаёт аккаунт — сначала окно имени)
+async function saveBoardsOrder(ids) {
+  if (window.KanbanAccount) await window.KanbanAccount.askNameIfGuest();
+  try {
+    await fetch('/api/boards/order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids })
+    });
+  } catch (err) {
+    console.error('Не удалось сохранить порядок досок:', err);
+  }
 }
 
 let emptyHintEl = null;
@@ -242,13 +337,7 @@ boardsGrid.addEventListener('dragend', async () => {
   draggedTile = null;
   const ids = currentOrder();
   if (ids.join(',') === orderBeforeDrag) return; // порядок не изменился
-  // гость: перестановка досок создаёт аккаунт — сначала «Как вас зовут?»
-  if (window.KanbanAccount) await window.KanbanAccount.askNameIfGuest();
-  fetch('/api/boards/order', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ids })
-  }).catch(err => console.error('Не удалось сохранить порядок досок:', err));
+  saveBoardsOrder(ids);
 });
 
 // При возврате на стартовую страницу кнопкой браузера «Назад» страница может

@@ -187,6 +187,100 @@ svg { display: block; flex-shrink: 0; }
   }
 }
 
+/* «Переместить» на плитке — только на сенсорных экранах */
+/* плитка — ссылка: без стандартной подсветки ссылки при нажатии на телефоне
+   (иначе она накрывает и плитку, и открытое меню) */
+.board-tile {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.board-tile-move-wrap {
+  position: relative;
+  display: none;
+  margin: -6px -4px 0 0;
+}
+
+@media (hover: none) {
+  .board-tile-move-wrap {
+    display: block;
+  }
+}
+
+.board-tile-move {
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  border: none;
+  background: transparent;
+  color: var(--icon);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.board-tile[data-bg] .board-tile-move {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.board-tile[data-bg="yellow"] .board-tile-move {
+  color: rgba(28, 28, 30, 0.75);
+}
+
+.tile-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  min-width: 160px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+}
+
+.tile-menu[hidden] { display: none; }
+
+.tile-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tile-menu-item svg {
+  color: var(--icon);
+}
+
+.tile-menu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* сдвинутая плитка коротко подсвечивается */
+@keyframes tile-moved {
+  0% { box-shadow: 0 0 0 3px #5b76fe; }
+  100% { box-shadow: 0 0 0 3px transparent; }
+}
+
+.board-tile.tile-moved {
+  animation: tile-moved 1.2s ease-out;
+}
+
 .board-tile-delete:hover {
   background: var(--hover);
   color: var(--text);
