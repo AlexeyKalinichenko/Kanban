@@ -32,6 +32,7 @@
   ENDUSER
 """
 
+import atexit
 import os
 import re
 import secrets
@@ -106,9 +107,24 @@ def _parse_time(value: str):
         return None
 
 
+
+# Неважные изменения (время последнего захода, счётчик заходов) записываются
+# в файл не сразу, а пачкой — не чаще раза в столько секунд. Важные (новый
+# аккаунт, логин, пароль, чистка) — сразу.
+SAVE_DELAY_SECONDS = 5
+
+
 class AccountStore:
-    """Хранилище аккаунтов в Data/users.txt. Все операции — под одной блокировкой,
-    файл перезаписывается атомарно (через временный файл)."""
+    """Хранилище аккаунтов в Data/users.txt.
+
+    Файл читается один раз и держится в памяти (со словарями по id, логину и
+    «силуэту» логина), поэтому поиск аккаунта не зависит от их числа. Если
+    файл поменяли вручную при работающем сервере — он перечитывается сам
+    (сверяем время изменения файла). Все операции — под одной блокировкой,
+    файл перезаписывается атомарно (через временный файл).
+
+    Сервер должен работать одним процессом (потоков — сколько угодно):
+    у каждого процесса была бы своя копия аккаунтов в памяти."""
 
     def __init__(self, data_dir: str, is_untouched_board=None):
         """is_untouched_board(path, board_id) -> bool: доска — нетронутая копия
@@ -118,12 +134,27 @@ class AccountStore:
         self.users_file = os.path.join(data_dir, "users.txt")
         self.users_dir = os.path.join(data_dir, "users")
         self._lock = threading.RLock()
+        self._users = []          # аккаунты в порядке файла
+        self._by_id = {}          # id -> аккаунт
+        self._by_key = {}         # name_key(логин) -> аккаунт
+        self._by_skeleton = {}    # name_skeleton(логин) -> аккаунт
+        self._loaded = False
+        self._loaded_mtime = None
+        self._dirty = False       # в памяти есть изменения, ещё не записанные в файл
+        self._flush_timer = None
+        atexit.register(self.flush)
 
     # ------------------------------------------------------------------
     # Чтение / запись файла аккаунтов
     # ------------------------------------------------------------------
 
-    def _load(self) -> list:
+    def _file_mtime(self):
+        try:
+            return os.stat(self.users_file).st_mtime_ns
+        except OSError:
+            return None
+
+    def _read_file(self) -> list:
         try:
             with open(self.users_file, "r", encoding="utf-8") as f:
                 text = f.read()
@@ -174,14 +205,36 @@ class AccountStore:
                     current["visit_at"] = value
         return users
 
-    def _save(self, users: list) -> None:
-        os.makedirs(self.data_dir, exist_ok=True)
+    def _reindex(self) -> None:
+        """Пересобирает словари поиска (при повторах логина побеждает первый
+        в файле — как раньше при поиске по порядку)."""
+        self._by_id, self._by_key, self._by_skeleton = {}, {}, {}
+        for u in self._users:
+            self._index(u)
+
+    def _index(self, u: dict) -> None:
+        self._by_id.setdefault(u["id"], u)
+        self._by_key.setdefault(name_key(u["name"]), u)
+        self._by_skeleton.setdefault(name_skeleton(u["name"]), u)
+
+    def _ensure_loaded(self) -> None:
+        """Загружает файл при первом обращении и перечитывает, если его
+        поменяли снаружи (а у нас нет незаписанных изменений). Под self._lock."""
+        mtime = self._file_mtime()
+        if self._loaded and (self._dirty or mtime == self._loaded_mtime):
+            return
+        self._users = self._read_file()
+        self._reindex()
+        self._loaded = True
+        self._loaded_mtime = mtime
+
+    def _serialize(self) -> str:
         lines = [
             "# Аккаунты канбан-доски. Пароли хранятся только в виде хэша.",
             "# Формат: USER id=<id> / NAME: / PASSWORD: (если задан) / VER: / CREATED: / SEEN: / ENDUSER",
             "",
         ]
-        for u in users:
+        for u in self._users:
             lines.append(f"USER id={u['id']}")
             lines.append(f"NAME: {u['name']}")
             if u.get("renamed"):
@@ -196,10 +249,39 @@ class AccountStore:
                 lines.append(f"VISITAT: {u['visit_at']}")
             lines.append("ENDUSER")
             lines.append("")
+        return "\n".join(lines)
+
+    def _write_now(self) -> None:
+        """Записывает аккаунты в файл сейчас же. Под self._lock."""
+        os.makedirs(self.data_dir, exist_ok=True)
         tmp = self.users_file + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
+            f.write(self._serialize())
         os.replace(tmp, self.users_file)
+        self._loaded_mtime = self._file_mtime()
+        self._dirty = False
+
+    def _changed(self, urgent: bool) -> None:
+        """Отмечает изменение: важное записывается сразу, неважное — через
+        SAVE_DELAY_SECONDS вместе с остальными. Под self._lock."""
+        self._dirty = True
+        if urgent:
+            self._write_now()
+        elif self._flush_timer is None:
+            timer = threading.Timer(SAVE_DELAY_SECONDS, self.flush)
+            timer.daemon = True
+            self._flush_timer = timer
+            timer.start()
+
+    def flush(self) -> None:
+        """Записывает незаписанные изменения (по таймеру и при остановке сервера)."""
+        with self._lock:
+            self._flush_timer = None
+            if self._dirty:
+                try:
+                    self._write_now()
+                except OSError as err:
+                    print("[accounts] не удалось записать users.txt:", err)
 
     # ------------------------------------------------------------------
     # Поиск
@@ -207,22 +289,20 @@ class AccountStore:
 
     def get(self, user_id: str):
         with self._lock:
-            for u in self._load():
-                if u["id"] == user_id:
-                    return dict(u)
-        return None
+            self._ensure_loaded()
+            u = self._by_id.get(user_id)
+            return dict(u) if u else None
 
     def find_by_name(self, name: str):
-        key = name_key(name)
         with self._lock:
-            for u in self._load():
-                if name_key(u["name"]) == key:
-                    return dict(u)
-        return None
+            self._ensure_loaded()
+            u = self._by_key.get(name_key(name))
+            return dict(u) if u else None
 
     def count(self) -> int:
         with self._lock:
-            return len(self._load())
+            self._ensure_loaded()
+            return len(self._users)
 
     def user_dir(self, user_id: str) -> str:
         return os.path.join(self.users_dir, user_id)
@@ -239,11 +319,11 @@ class AccountStore:
             return NAME_RULES_TEXT
         if LATIN_RE.search(name) and CYRILLIC_RE.search(name):
             return NAME_MIXED_TEXT
-        skeleton = name_skeleton(name)
         with self._lock:
-            for u in self._load():
-                if u["id"] != user_id and name_skeleton(u["name"]) == skeleton:
-                    return "Этот логин уже занят."
+            self._ensure_loaded()
+            other = self._by_skeleton.get(name_skeleton(name))
+            if other and other["id"] != user_id:
+                return "Этот логин уже занят."
         return None
 
     def create(self, name: str = ""):
@@ -252,17 +332,16 @@ class AccountStore:
         логина). Возвращает (аккаунт, None) или (None, текст ошибки)."""
         name = normalize_name(name)
         with self._lock:
+            self._ensure_loaded()
             if name:
                 error = self.validate_name(name)
                 if error:
                     return None, error
-            users = self._load()
-            taken = {name_key(u["name"]) for u in users}
             renamed = bool(name)
             for attempt in range(0 if name else 200):
                 digits = 4 if attempt < 100 else 6
                 candidate = "user-" + "".join(secrets.choice("0123456789") for _ in range(digits))
-                if candidate not in taken:
+                if name_key(candidate) not in self._by_key:
                     name = candidate
                     break
             if not name:
@@ -271,8 +350,9 @@ class AccountStore:
             user = {"id": str(uuid.uuid4()), "name": name, "password": "",
                     "renamed": renamed, "ver": 1, "created": now, "seen": now,
                     "visits": 1, "visit_at": now}
-            users.append(user)
-            self._save(users)
+            self._users.append(user)
+            self._index(user)
+            self._changed(urgent=True)
             os.makedirs(self.user_dir(user["id"]), exist_ok=True)
             return dict(user), None
 
@@ -280,8 +360,8 @@ class AccountStore:
         """Меняет логин — только один раз. Возвращает текст ошибки или None."""
         name = normalize_name(name)
         with self._lock:
-            users = self._load()
-            user = next((u for u in users if u["id"] == user_id), None)
+            self._ensure_loaded()
+            user = self._by_id.get(user_id)
             if not user:
                 return "Аккаунт не найден."
             if user.get("renamed"):
@@ -291,7 +371,8 @@ class AccountStore:
                 return error
             user["name"] = name
             user["renamed"] = True
-            self._save(users)
+            self._reindex()
+            self._changed(urgent=True)
             return None
 
     # ------------------------------------------------------------------
@@ -301,41 +382,40 @@ class AccountStore:
     def set_password(self, user_id: str, password: str) -> int:
         """Задаёт пароль и увеличивает версию сессий (все остальные устройства
         выходят из аккаунта). Возвращает новую версию."""
+        # хэш считается долго (~0,1 с) — вне блокировки, чтобы не задерживать других
+        password_hash = generate_password_hash(password)
         with self._lock:
-            users = self._load()
-            new_ver = 1
-            for u in users:
-                if u["id"] == user_id:
-                    u["password"] = generate_password_hash(password)
-                    u["ver"] = int(u.get("ver", 1)) + 1
-                    new_ver = u["ver"]
-            self._save(users)
-            return new_ver
+            self._ensure_loaded()
+            user = self._by_id.get(user_id)
+            if not user:
+                return 1
+            user["password"] = password_hash
+            user["ver"] = int(user.get("ver", 1)) + 1
+            self._changed(urgent=True)
+            return user["ver"]
 
     @staticmethod
     def check_password(user: dict, password: str) -> bool:
         return bool(user and user.get("password")) and check_password_hash(user["password"], password or "")
 
     def touch(self, user_id: str) -> None:
-        """Отмечает заход пользователя (пишет в файл не чаще раза в сутки)."""
+        """Отмечает заход пользователя (обновляется не чаще раза в сутки)."""
         with self._lock:
-            users = self._load()
-            changed = False
-            for u in users:
-                if u["id"] == user_id:
-                    seen = _parse_time(u.get("seen", ""))
-                    if not seen or datetime.now() - seen > timedelta(days=1):
-                        u["seen"] = _now()
-                        changed = True
-            if changed:
-                self._save(users)
+            self._ensure_loaded()
+            u = self._by_id.get(user_id)
+            if not u:
+                return
+            seen = _parse_time(u.get("seen", ""))
+            if not seen or datetime.now() - seen > timedelta(days=1):
+                u["seen"] = _now()
+                self._changed(urgent=False)
 
     def register_visit(self, user_id: str) -> int:
         """Отмечает открытие страницы. Если с прошлого открытия прошло не меньше
         VISIT_GAP_MINUTES — это новый заход (счётчик +1). Возвращает число заходов."""
         with self._lock:
-            users = self._load()
-            user = next((u for u in users if u["id"] == user_id), None)
+            self._ensure_loaded()
+            user = self._by_id.get(user_id)
             if not user:
                 return 0
             now = datetime.now()
@@ -345,12 +425,12 @@ class AccountStore:
                 if last is not None or user.get("visits") != VISITS_UNKNOWN:
                     user["visits"] = int(user.get("visits", 1)) + 1
                 changed = True
-            # время последнего открытия — не чаще раза в минуту, чтобы не писать файл зря
+            # время последнего открытия — не чаще раза в минуту
             if last is None or now - last >= timedelta(minutes=1):
                 user["visit_at"] = _now()
                 changed = True
             if changed:
-                self._save(users)
+                self._changed(urgent=False)
             return int(user["visits"])
 
     # ------------------------------------------------------------------
@@ -374,24 +454,36 @@ class AccountStore:
             return True
         return False
 
+    @staticmethod
+    def _is_stale(u: dict, limit: datetime) -> bool:
+        if u.get("password"):
+            return False
+        seen = _parse_time(u.get("seen", "")) or _parse_time(u.get("created", ""))
+        return seen is not None and seen < limit
+
     def cleanup(self) -> int:
         """Удаляет аккаунты без пароля и без своих досок (нетронутые шаблонные
-        доски не в счёт), в которые не заходили
-        больше CLEANUP_AFTER_DAYS дней. Возвращает число удалённых."""
+        доски не в счёт), в которые не заходили больше CLEANUP_AFTER_DAYS дней.
+        Папки досок проверяются без блокировки — остальные запросы в это время
+        не ждут. Возвращает число удалённых."""
+        limit = datetime.now() - timedelta(days=CLEANUP_AFTER_DAYS)
         with self._lock:
-            users = self._load()
-            limit = datetime.now() - timedelta(days=CLEANUP_AFTER_DAYS)
-            keep, removed = [], []
-            for u in users:
-                seen = _parse_time(u.get("seen", "")) or _parse_time(u.get("created", ""))
-                stale = seen is not None and seen < limit
-                if not u.get("password") and stale and not self._has_boards(u["id"]):
-                    removed.append(u)
-                else:
-                    keep.append(u)
-            if removed:
-                self._save(keep)
-                for u in removed:
-                    shutil.rmtree(self.user_dir(u["id"]), ignore_errors=True)
-                print(f"[accounts] удалено пустых аккаунтов без пароля: {len(removed)}")
-            return len(removed)
+            self._ensure_loaded()
+            candidates = [u["id"] for u in self._users if self._is_stale(u, limit)]
+        empty = {uid for uid in candidates if not self._has_boards(uid)}
+        if not empty:
+            return 0
+        with self._lock:
+            self._ensure_loaded()
+            # пока проверяли папки, пользователь мог зайти или задать пароль
+            removed = {u["id"] for u in self._users
+                       if u["id"] in empty and self._is_stale(u, limit)}
+            if not removed:
+                return 0
+            self._users = [u for u in self._users if u["id"] not in removed]
+            self._reindex()
+            self._changed(urgent=True)
+        for uid in removed:
+            shutil.rmtree(self.user_dir(uid), ignore_errors=True)
+        print(f"[accounts] удалено пустых аккаунтов без пароля: {len(removed)}")
+        return len(removed)

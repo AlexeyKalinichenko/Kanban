@@ -63,6 +63,25 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "Data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
+
+def write_text_atomic(path: str, text: str) -> None:
+    """Записывает файл целиком через временный файл и подмену: тот, кто
+    читает файл в этот момент, видит либо старую, либо новую версию, но не
+    половину. Имя временного файла не кончается на .txt — в список досок
+    он не попадает."""
+    tmp = f"{path}.{uuid.uuid4().hex}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def is_untouched_template_board(path: str, board_id: str) -> bool:
     """Доска пользователя — нетронутая копия шаблонной с тем же id
     (сравниваем содержимое, кроме даты создания)."""
@@ -82,6 +101,15 @@ def is_untouched_template_board(path: str, board_id: str) -> bool:
 accounts = AccountStore(DATA_DIR, lambda path, board_id: is_untouched_template_board(path, board_id))
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
+
+# За обратным прокси (nginx, Caddy, Cloudflare Tunnel…) настоящий адрес
+# посетителя приходит в заголовке X-Forwarded-For — без этого все запросы
+# выглядят как пришедшие с адреса прокси, и ограничения «попыток с одного
+# адреса» срабатывали бы сразу на всех. Включайте KANBAN_PROXY=1 только когда
+# сервер действительно стоит за прокси: иначе заголовок может подделать кто угодно.
+if os.environ.get("KANBAN_PROXY") == "1":
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # Браузер не должен держать CSS/JS в кэше без проверки: в старых версиях Flask
 # по умолчанию разрешено кэшировать статику на 12 часов, и после правок
@@ -189,8 +217,7 @@ def copy_template_boards(user_id: str) -> None:
             with open(src, "r", encoding="utf-8") as f:
                 data = parse_board(f.read())
             data["created"] = now
-            with open(os.path.join(target, name), "w", encoding="utf-8") as f:
-                f.write(serialize_board(data))
+            write_text_atomic(os.path.join(target, name), serialize_board(data))
 
 
 def board_file_path(board_id: str) -> str:
@@ -221,10 +248,9 @@ def write_board_order(ids: list) -> None:
         if is_valid_board_id(board_id) and board_id not in seen:
             seen.add(board_id)
             clean.append(board_id)
-    with open(order_file_path(), "w", encoding="utf-8") as f:
-        f.write("# Порядок досок на стартовой странице: по одному id доски на строку\n")
-        for board_id in clean:
-            f.write(board_id + "\n")
+    text = "# Порядок досок на стартовой странице: по одному id доски на строку\n"
+    text += "".join(board_id + "\n" for board_id in clean)
+    write_text_atomic(order_file_path(), text)
 
 
 # ---------------------------------------------------------------------------
@@ -541,8 +567,10 @@ def start_guest() -> None:
         session["guest"] = secrets.token_urlsafe(16)
 
 
-# ключ гостя -> id созданного по нему аккаунта (живёт до перезапуска сервера)
+# ключ гостя -> (id созданного по нему аккаунта, когда создан). Нужен только
+# в первые секунды (две вкладки одновременно), старые записи удаляются раз в час.
 _guest_accounts = {}
+GUEST_ACCOUNT_TTL = 24 * 60 * 60
 _guest_lock = threading.Lock()
 
 
@@ -556,7 +584,7 @@ def ensure_user(name: str = ""):
     if not token:
         return None, (jsonify({"error": "auth"}), 401)
     with _guest_lock:
-        uid = _guest_accounts.get(token)
+        uid = (_guest_accounts.get(token) or (None, 0))[0]
         existing = accounts.get(uid) if uid else None
         if existing:
             start_session(existing)
@@ -569,7 +597,7 @@ def ensure_user(name: str = ""):
             return None, json_error(error)
         copy_template_boards(user["id"])
         add_hit("create", ip)
-        _guest_accounts[token] = user["id"]
+        _guest_accounts[token] = (user["id"], time.time())
         start_session(user)
         return user, None
 
@@ -602,18 +630,52 @@ def add_hit(kind: str, key: str) -> None:
         _hits.setdefault((kind, key), []).append(time.time())
 
 
-# Чистка пустых аккаунтов без пароля — не чаще раза в сутки
-_last_cleanup = {"time": 0.0}
+def prune_memory() -> None:
+    """Удаляет из памяти устаревшие записи ограничителей частоты и ключей
+    гостей — иначе они копились бы до перезапуска сервера."""
+    now = time.time()
+    longest = max(LOGIN_FAIL_WINDOW, CREATE_WINDOW)
+    with _hits_lock:
+        for key in list(_hits):
+            hits = [t for t in _hits[key] if now - t < longest]
+            if hits:
+                _hits[key] = hits
+            else:
+                del _hits[key]
+    with _guest_lock:
+        for token in list(_guest_accounts):
+            if now - _guest_accounts[token][1] > GUEST_ACCOUNT_TTL:
+                del _guest_accounts[token]
+
+
+def _housekeeping(do_cleanup: bool) -> None:
+    try:
+        prune_memory()
+        if do_cleanup:
+            accounts.cleanup()
+    except Exception as err:  # фоновая уборка не должна ронять сервер
+        print("[accounts] ошибка чистки:", err)
+
+
+# Уборка в фоне (запрос, который её запустил, её не ждёт): чистка памяти —
+# раз в час, чистка пустых аккаунтов без пароля — раз в сутки
+_housekeeping_state = {"prune": 0.0, "cleanup": 0.0}
+_housekeeping_lock = threading.Lock()
 
 
 @app.before_request
 def periodic_cleanup():
-    if time.time() - _last_cleanup["time"] > 24 * 60 * 60:
-        _last_cleanup["time"] = time.time()
-        try:
-            accounts.cleanup()
-        except Exception as err:  # чистка не должна ломать запросы
-            print("[accounts] ошибка чистки:", err)
+    now = time.time()
+    if now - _housekeeping_state["prune"] < 60 * 60:
+        return
+    with _housekeeping_lock:
+        if now - _housekeeping_state["prune"] < 60 * 60:
+            return
+        _housekeeping_state["prune"] = now
+        do_cleanup = now - _housekeeping_state["cleanup"] > 24 * 60 * 60
+        if do_cleanup:
+            _housekeeping_state["cleanup"] = now
+    threading.Thread(target=_housekeeping, args=(do_cleanup,), daemon=True).start()
 
 
 # API (кроме входа) — для вошедших и гостей
@@ -841,8 +903,7 @@ def create_board():
     board_id = str(uuid.uuid4())
     created = datetime.now().isoformat(timespec="seconds")
     text = serialize_board({"title": title, "created": created, "columns": []})
-    with open(board_file_path(board_id), "w", encoding="utf-8") as f:
-        f.write(text)
+    write_text_atomic(board_file_path(board_id), text)
 
     # новая доска всегда добавляется в конец списка
     order = read_board_order()
@@ -937,11 +998,31 @@ def save_board(board_id):
             label = str(t.get("label", "") or "").strip()
             if existing_labels.get(t.get("key")) != label:
                 t["label"] = label[:TAG_LABEL_MAX].strip()
-    text = serialize_board(payload)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
+    write_text_atomic(path, serialize_board(payload))
     return jsonify({"status": "ok"})
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5050)
+    # Настройки запуска — переменными окружения:
+    #   KANBAN_HOST    — адрес (по умолчанию 127.0.0.1 — только этот компьютер;
+    #                    0.0.0.0 — доступно из сети)
+    #   KANBAN_PORT    — порт (по умолчанию 5050)
+    #   KANBAN_THREADS — сколько запросов обрабатывать одновременно (по умолчанию 16)
+    #   KANBAN_DEBUG=1 — режим разработки Flask (автоперезапуск при правке кода,
+    #                    отладчик в браузере). Только на своём компьютере: через
+    #                    отладчик можно выполнить любой код на сервере.
+    host = os.environ.get("KANBAN_HOST", "127.0.0.1")
+    port = int(os.environ.get("KANBAN_PORT", "5050"))
+    if os.environ.get("KANBAN_DEBUG") == "1":
+        app.run(debug=True, host=host, port=port)
+    else:
+        try:
+            from waitress import serve
+        except ImportError:
+            print("[server] waitress не установлен (pip3 install waitress) — "
+                  "запускаю встроенный сервер Flask, он годится только для проверки")
+            app.run(host=host, port=port, threaded=True)
+        else:
+            threads = int(os.environ.get("KANBAN_THREADS", "16"))
+            print(f"[server] http://{host}:{port} (waitress, потоков: {threads})")
+            serve(app, host=host, port=port, threads=threads)
