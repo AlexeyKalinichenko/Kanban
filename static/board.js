@@ -1838,7 +1838,7 @@
       return;
     }
     if (!accountGate) {
-      accountGate = window.KanbanGuest.ensureNamed().then(() => {
+      accountGate = window.KanbanGuest.ensureNamed('board_save').then(() => {
         accountReady = true;
         accountGate = null;
         sendBoard();

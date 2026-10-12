@@ -15,18 +15,23 @@
   доска, изменение, удаление или перестановка досок. В новое пространство
   копируются шаблонные доски. Войти в существующее
   пространство — кнопка «Войти» на стартовой странице → /login.
+- Журнал событий аккаунтов (создание, входы, выходы, заходы) — events.py,
+  файлы Data/logs/events-ГГГГ-ММ.txt; список событий — README.md.
 
 Страницы:
 - GET    /                       — стартовая страница пространства
 - GET    /board/<id>             — доска
 - GET    /login                  — вход по логину и паролю
+- GET    /admin                  — статистика (только логинам из KANBAN_ADMINS)
 
 API аккаунта:
 - GET    /api/account            — логин, задан ли пароль, можно ли сменить логин
 - POST   /api/account/name       — сменить логин (только один раз)
+- POST   /api/account/name-prompt — гостю показано окно имени (только журнал)
 - POST   /api/account/password   — задать / сменить пароль
 - POST   /api/login              — войти по логину и паролю
 - POST   /api/logout             — выйти
+- GET    /api/admin/stats?days=  — цифры для /admin (7, 30 или 90 дней)
 
 API досок (только доски текущего пользователя):
 - GET    /api/boards            — список всех досок (id + название)
@@ -48,9 +53,11 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta
-from flask import Flask, Response, g, jsonify, redirect, request, session
+from flask import Flask, Response, abort, g, jsonify, redirect, request, session
 
-from accounts import AccountStore, NAME_RULES_TEXT, PASSWORD_MAX, PASSWORD_MIN, VISITS_UNKNOWN
+from accounts import AccountStore, NAME_RULES_TEXT, PASSWORD_MAX, PASSWORD_MIN, VISITS_UNKNOWN, name_key
+from events import EventLog, fingerprint, is_bot, local_iso, short_user_agent
+import stats
 
 # Напоминание «Задайте пароль, чтобы не потерять доступ» показывается
 # начиная с этого захода в аккаунт (заход — см. accounts.VISIT_GAP_MINUTES)
@@ -99,6 +106,7 @@ def is_untouched_template_board(path: str, board_id: str) -> bool:
 
 # функции разбора досок определены ниже — передаём обёртку
 accounts = AccountStore(DATA_DIR, lambda path, board_id: is_untouched_template_board(path, board_id))
+events = EventLog(DATA_DIR)
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
@@ -536,18 +544,50 @@ def current_user():
         candidate = accounts.get(uid)
         if candidate and candidate.get("ver") == session.get("ver"):
             user = candidate
+        elif candidate:
+            # пароль сменили на другом устройстве — эта cookie больше не действует
+            events.write("session.end", uid=uid, name=candidate["name"], sid=session.get("sid"),
+                         reason="password_changed", ip=client_ip())
+            for key in ("uid", "ver", "sid"):
+                session.pop(key, None)
     g.user = user
     if user:
+        if not session.get("sid"):
+            # cookie выдана до появления журнала — даём ей id устройства
+            session["sid"] = new_sid()
         accounts.touch(user["id"])
     return user
 
 
-def start_session(user: dict) -> None:
+def new_sid() -> str:
+    """Короткий id cookie входа (браузера/устройства) для журнала событий."""
+    return secrets.token_hex(4)
+
+
+def request_ua() -> str:
+    return short_user_agent(request.headers.get("User-Agent", ""))
+
+
+def start_session(user: dict, reason: str = "", sid: str = "") -> None:
+    """Выдаёт браузеру cookie входа. reason — для журнала: create (новый
+    аккаунт), login (вход по паролю), password (новая cookie после смены
+    пароля); без reason событие не пишется. sid — id устройства (по умолчанию
+    новый)."""
+    previous = current_user()
+    if previous and previous["id"] != user["id"]:
+        # вход в другое пространство в этом браузере — прежний вход закончился
+        events.write("session.end", uid=previous["id"], name=previous["name"],
+                     sid=session.get("sid"), reason="switch", ip=client_ip())
+    sid = sid or new_sid()
     session.clear()
     session.permanent = True
     session["uid"] = user["id"]
     session["ver"] = user["ver"]
+    session["sid"] = sid
     g.user = user
+    if reason:
+        events.write("session.start", uid=user["id"], name=user["name"], sid=sid,
+                     reason=reason, ip=client_ip(), ua=request_ua())
 
 
 def guest_token():
@@ -565,18 +605,24 @@ def start_guest() -> None:
         session.clear()
         session.permanent = True
         session["guest"] = secrets.token_urlsafe(16)
+        raw_ua = request.headers.get("User-Agent", "")
+        if not is_bot(raw_ua):
+            events.write("guest.start", gid=fingerprint(session["guest"]),
+                         ip=client_ip(), ua=request_ua())
 
 
-# ключ гостя -> (id созданного по нему аккаунта, когда создан). Нужен только
+# ключ гостя -> (id созданного по нему аккаунта, когда создан, id устройства). Нужен только
 # в первые секунды (две вкладки одновременно), старые записи удаляются раз в час.
 _guest_accounts = {}
 GUEST_ACCOUNT_TTL = 24 * 60 * 60
 _guest_lock = threading.Lock()
 
 
-def ensure_user(name: str = ""):
+def ensure_user(name: str = "", trigger: str = ""):
     """Текущий пользователь; гостю — создаёт аккаунт (с логином name или
-    автоматическим). Возвращает (пользователь, None) или (None, ответ-ошибка)."""
+    автоматическим). trigger — для журнала: что гость пытался сделать (по
+    умолчанию — какой запрос создал аккаунт). Возвращает (пользователь, None)
+    или (None, ответ-ошибка)."""
     user = current_user()
     if user:
         return user, None
@@ -584,22 +630,47 @@ def ensure_user(name: str = ""):
     if not token:
         return None, (jsonify({"error": "auth"}), 401)
     with _guest_lock:
-        uid = (_guest_accounts.get(token) or (None, 0))[0]
+        uid, _, sid = _guest_accounts.get(token) or (None, 0, "")
         existing = accounts.get(uid) if uid else None
         if existing:
-            start_session(existing)
+            # вторая вкладка того же браузера — та же cookie, события не пишем
+            start_session(existing, sid=sid)
             return existing, None
         ip = client_ip()
         if is_limited("create", ip, CREATE_LIMIT, CREATE_WINDOW):
             return None, json_error("С этого адреса создано слишком много пространств. Попробуйте позже.", 429)
-        user, error = accounts.create(name)
+        sid = new_sid()
+        user, error = accounts.create(name, sid)
         if error:
             return None, json_error(error)
         copy_template_boards(user["id"])
         add_hit("create", ip)
-        _guest_accounts[token] = (user["id"], time.time())
-        start_session(user)
+        _guest_accounts[token] = (user["id"], time.time(), sid)
+        events.write("account.create", uid=user["id"], name=user["name"], gid=fingerprint(token),
+                     trigger=trigger or CREATE_TRIGGERS.get(request.endpoint, request.endpoint),
+                     ip=ip, ua=request_ua())
+        start_session(user, "create", sid)
+        # создание аккаунта — его первый заход
+        events.write("visit.start", uid=user["id"], name=user["name"], sid=sid, visit=1, ip=ip)
         return user, None
+
+
+# какое действие гостя создало аккаунт (поле trigger события account.create)
+CREATE_TRIGGERS = {
+    "rename_account": "rename",
+    "change_password": "password",
+    "create_board": "board_create",
+    "save_board": "board_save",
+    "delete_board": "board_delete",
+    "save_boards_order": "board_order",
+}
+GUEST_ACTIONS = set(CREATE_TRIGGERS.values())
+
+
+def guest_action(payload: dict) -> str:
+    """Действие гостя из запроса (только из списка известных) или ""."""
+    action = str(payload.get("action") or "")
+    return action if action in GUEST_ACTIONS else ""
 
 
 def client_ip() -> str:
@@ -648,17 +719,30 @@ def prune_memory() -> None:
                 del _guest_accounts[token]
 
 
+def write_visit_end(data: dict) -> None:
+    data = dict(data, started=local_iso(data["started"]), ended=local_iso(data["ended"]))
+    events.write("visit.end", **data)
+
+
 def _housekeeping(do_cleanup: bool) -> None:
     try:
         prune_memory()
+        # заходы, в которых давно не было действий (в т.ч. оставшиеся
+        # незакрытыми до перезапуска сервера), — закрываем
+        for data in accounts.close_stale_visits():
+            write_visit_end(data)
         if do_cleanup:
-            accounts.cleanup()
+            for u in accounts.cleanup():
+                events.write("account.delete", uid=u["id"], name=u["name"],
+                             reason="cleanup", age_days=u["age_days"])
+            events.prune()
     except Exception as err:  # фоновая уборка не должна ронять сервер
         print("[accounts] ошибка чистки:", err)
 
 
-# Уборка в фоне (запрос, который её запустил, её не ждёт): чистка памяти —
-# раз в час, чистка пустых аккаунтов без пароля — раз в сутки
+# Уборка в фоне (запрос, который её запустил, её не ждёт): чистка памяти и
+# закрытие заходов — раз в час (и при первом запросе после старта сервера),
+# чистка пустых аккаунтов без пароля и старых файлов журнала — раз в сутки
 _housekeeping_state = {"prune": 0.0, "cleanup": 0.0}
 _housekeeping_lock = threading.Lock()
 
@@ -690,6 +774,22 @@ def require_login_for_api():
     return None
 
 
+@app.before_request
+def track_activity():
+    """Любой запрос вошедшего пользователя (страница или API) — действие:
+    продлевает текущий заход или начинает новый (см. accounts.register_activity)."""
+    if request.path.startswith("/static/"):
+        return None
+    user = current_user()
+    if user:
+        for event, data in accounts.register_activity(user["id"], session.get("sid", "")):
+            if event == "visit.end":
+                write_visit_end(data)
+            else:
+                events.write(event, **data, ip=client_ip())
+    return None
+
+
 def json_error(message: str, status: int = 400):
     return jsonify({"error": message}), status
 
@@ -704,8 +804,6 @@ def index():
         # не вошли (новый посетитель, вышли, cookie устарела) — гость: пустое
         # пространство, аккаунт создастся при первом изменении
         start_guest()
-    else:
-        accounts.register_visit(current_user()["id"])
     return render_page("index.html")
 
 
@@ -716,8 +814,6 @@ def board_page(board_id):
     # чужая или удалённая доска — на стартовую страницу своего пространства
     if not is_valid_board_id(board_id) or not os.path.exists(board_file_path(board_id)):
         return redirect("/")
-    if current_user():
-        accounts.register_visit(current_user()["id"])
     return render_page("board.html")
 
 
@@ -732,6 +828,55 @@ def login_page():
 # API: аккаунт
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Администраторы (страница статистики /admin)
+# ---------------------------------------------------------------------------
+
+# Логины администраторов — через запятую в переменной окружения KANBAN_ADMINS
+# (KANBAN_ADMINS=alexey). Нужен заданный пароль: аккаунт без пароля
+# администратором не считается.
+ADMINS = {name_key(n) for n in os.environ.get("KANBAN_ADMINS", "").split(",") if n.strip()}
+
+
+def is_admin(user) -> bool:
+    return bool(user and user.get("password") and name_key(user["name"]) in ADMINS)
+
+
+_stats_cache = {}
+_stats_lock = threading.Lock()
+STATS_CACHE_SECONDS = 5 * 60
+STATS_PERIODS = (7, 30, 90)
+
+
+@app.route("/admin")
+def admin_page():
+    # остальным — «страницы нет», а не «нет доступа»: не выдаём, что она есть
+    if not is_admin(current_user()):
+        abort(404)
+    return render_page("admin.html")
+
+
+@app.route("/api/admin/stats", methods=["GET"])
+def admin_stats():
+    if not is_admin(current_user()):
+        abort(404)
+    days = request.args.get("days", type=int) or 30
+    if days not in STATS_PERIODS:
+        days = 30
+    fresh = request.args.get("fresh") == "1"
+    now = time.time()
+    with _stats_lock:
+        cached = _stats_cache.get(days)
+        if not fresh and cached and now - cached[0] < STATS_CACHE_SECONDS:
+            data = cached[1]
+        else:
+            data = stats.compute(os.path.join(DATA_DIR, "logs"), days, accounts.all_users())
+            _stats_cache[days] = (now, data)
+    response = jsonify(data)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def account_json(user: dict):
     return jsonify({
         "name": user["name"],
@@ -742,6 +887,8 @@ def account_json(user: dict):
         # напоминание «Задайте пароль…» — начиная с этого захода в аккаунт
         "visits": user.get("visits", VISITS_UNKNOWN),
         "passwordBannerFrom": PASSWORD_BANNER_FROM_VISIT,
+        # пункт «Статистика» в меню аккаунта
+        "isAdmin": is_admin(user),
     })
 
 
@@ -776,7 +923,9 @@ def rename_account():
         error = accounts.validate_name(name)
         if error:
             return json_error(error)
-        user, error_response = ensure_user(name)
+        # окно имени открылось перед другим действием (новая доска, правка…) —
+        # в журнал пишем его, а не «смену логина»
+        user, error_response = ensure_user(name, guest_action(payload))
         if error_response:
             return error_response
         return account_json(user)
@@ -784,6 +933,19 @@ def rename_account():
     if error:
         return json_error(error)
     return account_json(accounts.get(user["id"]))
+
+
+@app.route("/api/account/name-prompt", methods=["POST"])
+def name_prompt():
+    """Гостю показано окно имени (перед первым изменением). Только для
+    журнала: guest.prompt пишется один раз на ключ гостя."""
+    token = guest_token()
+    if token and not session.get("prompted"):
+        session["prompted"] = True
+        payload = request.get_json(force=True, silent=True) or {}
+        events.write("guest.prompt", gid=fingerprint(token),
+                     action=guest_action(payload) or None, ip=client_ip(), ua=request_ua())
+    return "", 204
 
 
 @app.route("/api/account/password", methods=["POST"])
@@ -813,27 +975,38 @@ def change_password():
     new_ver = accounts.set_password(user["id"], new)
     updated = accounts.get(user["id"])
     updated["ver"] = new_ver
-    start_session(updated)
+    start_session(updated, "password", session.get("sid", ""))
     return account_json(updated)
 
 
 @app.route("/api/login", methods=["POST"])
 def login():
     ip = client_ip()
-    if is_limited("login", ip, LOGIN_FAIL_LIMIT, LOGIN_FAIL_WINDOW):
-        return json_error("Слишком много попыток входа. Попробуйте через 15 минут.", 429)
     payload = request.get_json(force=True, silent=True) or {}
-    user = accounts.find_by_name(str(payload.get("name") or ""))
+    entered = str(payload.get("name") or "")
+    if is_limited("login", ip, LOGIN_FAIL_LIMIT, LOGIN_FAIL_WINDOW):
+        # в журнал — один раз за окно блокировки, иначе перебором можно раздуть файл
+        if not is_limited("login_limited_logged", ip, 1, LOGIN_FAIL_WINDOW):
+            add_hit("login_limited_logged", ip)
+            events.write("login.fail", name=entered[:40], reason="rate_limited", ip=ip, ua=request_ua())
+        return json_error("Слишком много попыток входа. Попробуйте через 15 минут.", 429)
+    user = accounts.find_by_name(entered)
     if not user or not accounts.check_password(user, str(payload.get("password") or "")):
         add_hit("login", ip)
+        reason = "no_user" if not user else ("bad_password" if user.get("password") else "no_password")
+        events.write("login.fail", name=entered[:40], reason=reason, ip=ip, ua=request_ua())
         # одно сообщение для всех случаев — не подсказываем, какие логины существуют
         return json_error("Неверный логин или пароль.")
-    start_session(user)
+    start_session(user, "login")
     return jsonify({"status": "ok"})
 
 
 @app.route("/api/logout", methods=["POST"])
 def logout():
+    user = current_user()
+    if user:
+        events.write("session.end", uid=user["id"], name=user["name"], sid=session.get("sid"),
+                     reason="logout", ip=client_ip())
     session.clear()
     return jsonify({"status": "ok"})
 

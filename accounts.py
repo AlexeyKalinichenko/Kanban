@@ -26,9 +26,13 @@
   CREATED: 2026-10-05T08:20:00
   SEEN: 2026-10-05T08:20:00       (последний заход, обновляется раз в сутки)
   VISITS: 3                       (сколько раз заходили в аккаунт: заход —
-                                   открытие приложения после перерыва
+                                   первое действие после перерыва
                                    VISIT_GAP_MINUTES; первый — создание)
-  VISITAT: 2026-10-05T08:20:00    (когда последний раз открывали страницу)
+  VISITAT: 2026-10-05T08:20:00    (время последнего действия: открытие
+                                   страницы или запрос к API)
+  VISITSTART: 2026-10-05T08:20:00 (начало текущего захода; строки нет, если
+                                   заход уже закрыт — записан visit.end)
+  VISITSID: a1b2c3d4              (устройство, с которого начат текущий заход)
   ENDUSER
 """
 
@@ -89,8 +93,9 @@ PASSWORD_MAX = 128
 # Пустые аккаунты без пароля, в которые не заходили столько дней, удаляются
 CLEANUP_AFTER_DAYS = 30
 
-# Заход в аккаунт — открытие приложения после перерыва не меньше стольких минут
-# (перезагрузки и переходы между досками подряд — тот же заход)
+# Заход в аккаунт — первое действие (открытие страницы, запрос к API) после
+# перерыва не меньше стольких минут. Заход заканчивается последним действием,
+# после которого столько минут ничего не было.
 VISIT_GAP_MINUTES = 30
 # У аккаунтов, созданных до подсчёта заходов, считаем заходов «много»
 VISITS_UNKNOWN = 99
@@ -172,7 +177,8 @@ class AccountStore:
                 if m and UUID_RE.match(m.group(1)):
                     current = {"id": m.group(1), "name": "", "password": "",
                                "renamed": False, "ver": 1, "created": "", "seen": "",
-                               "visits": VISITS_UNKNOWN, "visit_at": ""}
+                               "visits": VISITS_UNKNOWN, "visit_at": "",
+                               "visit_start": "", "visit_sid": ""}
             elif line == "ENDUSER":
                 if current and current["name"]:
                     users.append(current)
@@ -203,6 +209,10 @@ class AccountStore:
                         pass
                 elif key == "VISITAT":
                     current["visit_at"] = value
+                elif key == "VISITSTART":
+                    current["visit_start"] = value
+                elif key == "VISITSID":
+                    current["visit_sid"] = value
         return users
 
     def _reindex(self) -> None:
@@ -247,6 +257,10 @@ class AccountStore:
             lines.append(f"VISITS: {u.get('visits', VISITS_UNKNOWN)}")
             if u.get("visit_at"):
                 lines.append(f"VISITAT: {u['visit_at']}")
+            if u.get("visit_start"):
+                lines.append(f"VISITSTART: {u['visit_start']}")
+                if u.get("visit_sid"):
+                    lines.append(f"VISITSID: {u['visit_sid']}")
             lines.append("ENDUSER")
             lines.append("")
         return "\n".join(lines)
@@ -299,6 +313,12 @@ class AccountStore:
             u = self._by_key.get(name_key(name))
             return dict(u) if u else None
 
+    def all_users(self) -> list:
+        """Копии всех аккаунтов (для статистики)."""
+        with self._lock:
+            self._ensure_loaded()
+            return [dict(u) for u in self._users]
+
     def count(self) -> int:
         with self._lock:
             self._ensure_loaded()
@@ -326,10 +346,11 @@ class AccountStore:
                 return "Этот логин уже занят."
         return None
 
-    def create(self, name: str = ""):
+    def create(self, name: str = "", sid: str = ""):
         """Создаёт аккаунт без пароля. Без name — с автоматическим логином вида
         user-4821; с name — сразу с этим логином (это и есть единственная смена
-        логина). Возвращает (аккаунт, None) или (None, текст ошибки)."""
+        логина). Создание — первый заход (с устройства sid).
+        Возвращает (аккаунт, None) или (None, текст ошибки)."""
         name = normalize_name(name)
         with self._lock:
             self._ensure_loaded()
@@ -349,7 +370,8 @@ class AccountStore:
             now = _now()
             user = {"id": str(uuid.uuid4()), "name": name, "password": "",
                     "renamed": renamed, "ver": 1, "created": now, "seen": now,
-                    "visits": 1, "visit_at": now}
+                    "visits": 1, "visit_at": now,
+                    "visit_start": now, "visit_sid": sid}
             self._users.append(user)
             self._index(user)
             self._changed(urgent=True)
@@ -410,28 +432,74 @@ class AccountStore:
                 u["seen"] = _now()
                 self._changed(urgent=False)
 
-    def register_visit(self, user_id: str) -> int:
-        """Отмечает открытие страницы. Если с прошлого открытия прошло не меньше
-        VISIT_GAP_MINUTES — это новый заход (счётчик +1). Возвращает число заходов."""
+    @staticmethod
+    def _visit_end(user: dict) -> dict:
+        """Данные закрытого захода (для события visit.end)."""
+        started = _parse_time(user.get("visit_start", ""))
+        ended = _parse_time(user.get("visit_at", "")) or started
+        duration = int((ended - started).total_seconds() // 60) if started and ended else 0
+        return {"uid": user["id"], "name": user["name"], "sid": user.get("visit_sid", ""),
+                "visit": int(user.get("visits", 1)), "started": user.get("visit_start", ""),
+                "ended": user.get("visit_at", "") or user.get("visit_start", ""),
+                "duration": max(0, duration)}
+
+    def register_activity(self, user_id: str, sid: str = "") -> list:
+        """Отмечает действие пользователя (открытие страницы, запрос к API).
+        Если с прошлого действия прошло не меньше VISIT_GAP_MINUTES — прошлый
+        заход закончился (если его ещё не закрыли) и начался новый (счётчик +1).
+        Возвращает события: [("visit.end", данные), ("visit.start", данные)]
+        или пустой список."""
+        events = []
         with self._lock:
             self._ensure_loaded()
             user = self._by_id.get(user_id)
             if not user:
-                return 0
+                return events
             now = datetime.now()
             last = _parse_time(user.get("visit_at", ""))
-            changed = False
             if last is None or now - last >= timedelta(minutes=VISIT_GAP_MINUTES):
+                if user.get("visit_start"):
+                    events.append(("visit.end", self._visit_end(user)))
                 if last is not None or user.get("visits") != VISITS_UNKNOWN:
                     user["visits"] = int(user.get("visits", 1)) + 1
-                changed = True
-            # время последнего открытия — не чаще раза в минуту
-            if last is None or now - last >= timedelta(minutes=1):
-                user["visit_at"] = _now()
-                changed = True
-            if changed:
+                gap = int((now - last).total_seconds() // 60) if last else None
+                user["visit_at"] = user["visit_start"] = _now()
+                user["visit_sid"] = sid
+                events.append(("visit.start", {
+                    "uid": user["id"], "name": user["name"], "sid": sid,
+                    "visit": int(user["visits"]), "gap": gap}))
                 self._changed(urgent=False)
-            return int(user["visits"])
+            else:
+                stamp = _now()
+                # в файл — не чаще раза в минуту (точность до минуты нам достаточна)
+                minute_changed = stamp[:16] != (user.get("visit_at") or "")[:16]
+                user["visit_at"] = stamp
+                if not user.get("visit_start"):
+                    # аккаунт из версии без VISITSTART (или часы сервера
+                    # перевели) — считаем, что заход идёт с этого момента
+                    user["visit_start"], user["visit_sid"] = stamp, sid
+                if minute_changed:
+                    self._changed(urgent=False)
+        return events
+
+    def close_stale_visits(self) -> list:
+        """Закрывает заходы, в которых VISIT_GAP_MINUTES не было действий
+        (фоновая уборка и первый запрос после старта сервера). Возвращает
+        данные закрытых заходов для событий visit.end."""
+        limit = datetime.now() - timedelta(minutes=VISIT_GAP_MINUTES)
+        closed = []
+        with self._lock:
+            self._ensure_loaded()
+            for u in self._users:
+                if not u.get("visit_start"):
+                    continue
+                last = _parse_time(u.get("visit_at", "")) or _parse_time(u["visit_start"])
+                if last is None or last <= limit:
+                    closed.append(self._visit_end(u))
+                    u["visit_start"] = u["visit_sid"] = ""
+            if closed:
+                self._changed(urgent=True)
+        return closed
 
     # ------------------------------------------------------------------
     # Чистка пустых аккаунтов
@@ -461,29 +529,35 @@ class AccountStore:
         seen = _parse_time(u.get("seen", "")) or _parse_time(u.get("created", ""))
         return seen is not None and seen < limit
 
-    def cleanup(self) -> int:
+    def cleanup(self) -> list:
         """Удаляет аккаунты без пароля и без своих досок (нетронутые шаблонные
         доски не в счёт), в которые не заходили больше CLEANUP_AFTER_DAYS дней.
         Папки досок проверяются без блокировки — остальные запросы в это время
-        не ждут. Возвращает число удалённых."""
+        не ждут. Возвращает удалённые аккаунты: [{"id", "name", "age_days"}]."""
         limit = datetime.now() - timedelta(days=CLEANUP_AFTER_DAYS)
         with self._lock:
             self._ensure_loaded()
             candidates = [u["id"] for u in self._users if self._is_stale(u, limit)]
         empty = {uid for uid in candidates if not self._has_boards(uid)}
         if not empty:
-            return 0
+            return []
         with self._lock:
             self._ensure_loaded()
             # пока проверяли папки, пользователь мог зайти или задать пароль
-            removed = {u["id"] for u in self._users
-                       if u["id"] in empty and self._is_stale(u, limit)}
+            now = datetime.now()
+            removed_users = []
+            for u in self._users:
+                if u["id"] in empty and self._is_stale(u, limit):
+                    seen = _parse_time(u.get("seen", "")) or _parse_time(u.get("created", ""))
+                    removed_users.append({"id": u["id"], "name": u["name"],
+                                          "age_days": (now - seen).days if seen else None})
+            removed = {u["id"] for u in removed_users}
             if not removed:
-                return 0
+                return []
             self._users = [u for u in self._users if u["id"] not in removed]
             self._reindex()
             self._changed(urgent=True)
         for uid in removed:
             shutil.rmtree(self.user_dir(uid), ignore_errors=True)
         print(f"[accounts] удалено пустых аккаунтов без пароля: {len(removed)}")
-        return len(removed)
+        return removed_users
