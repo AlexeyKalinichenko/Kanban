@@ -51,7 +51,7 @@ function createAddTile() {
   tile.innerHTML = '<span class="add-board-pill">' + ICONS.plus + 'Создать доску</span>';
   tile.addEventListener('click', async () => {
     // гость: создание доски создаёт аккаунт — сначала окно «Как вас зовут?»
-    if (window.KanbanAccount) await window.KanbanAccount.askNameIfGuest();
+    if (window.KanbanAccount) await window.KanbanAccount.askNameIfGuest('board_create');
     const name = await window.KanbanDialog.prompt({
       title: 'Новая доска',
       value: 'Новая доска',
@@ -138,7 +138,7 @@ function createBoardTile(board) {
     e.preventDefault();
     e.stopPropagation();
     // гость: удаление доски создаёт аккаунт — сначала «Как вас зовут?»
-    if (window.KanbanAccount) await window.KanbanAccount.askNameIfGuest();
+    if (window.KanbanAccount) await window.KanbanAccount.askNameIfGuest('board_delete');
     const ok = await window.KanbanDialog.confirm({
       title: `Удалить доску «${board.title}»?`,
       message: 'Все столбцы и карточки этой доски будут удалены. Это действие нельзя отменить.',
@@ -242,7 +242,7 @@ async function afterTileShift(tile) {
 
 // Сохранить порядок досок (гостю перестановка создаёт аккаунт — сначала окно имени)
 async function saveBoardsOrder(ids) {
-  if (window.KanbanAccount) await window.KanbanAccount.askNameIfGuest();
+  if (window.KanbanAccount) await window.KanbanAccount.askNameIfGuest('board_order');
   try {
     await fetch('/api/boards/order', {
       method: 'POST',

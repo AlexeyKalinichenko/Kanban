@@ -103,6 +103,7 @@
   // (сохранили или закрыли Escape / кликом по фону)
   function renameDialog() {
     const guest = !!account.guest;
+    if (guest && window.KanbanGuest) window.KanbanGuest.notePrompt('rename');
     return window.KanbanDialog.form({
       title: guest ? 'Придумайте себе уникальное имя' : 'Сменить логин',
       // у гостя — без пояснения (правила покажутся, если имя не подойдёт)
@@ -130,9 +131,10 @@
   // Перед первым действием, которое создаёт аккаунт, спрашиваем у гостя имя
   // (окно «Как вас зовут?»). Окно обязательное: закрыть его, не введя имя,
   // нельзя — аккаунт создаётся с этим логином, потом выполняется действие.
-  async function askNameIfGuest() {
+  // action — что гость пытается сделать (для журнала событий, см. guest.js)
+  async function askNameIfGuest(action) {
     if (account && account.guest && window.KanbanGuest) {
-      const fresh = await window.KanbanGuest.ensureNamed();
+      const fresh = await window.KanbanGuest.ensureNamed(action);
       if (fresh) {
         account = fresh;
         render();
@@ -141,7 +143,7 @@
   }
 
   async function passwordDialog() {
-    await askNameIfGuest();
+    await askNameIfGuest('password');
     const min = account.passwordMin || 6;
     const fields = [];
     if (account.hasPassword) {

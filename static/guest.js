@@ -3,8 +3,15 @@
 // обязательно спрашиваем имя — окно «Как вас зовут?» (закрыть, не введя имя,
 // нельзя). Введённое имя становится логином, и аккаунт создаётся с ним.
 //
-//   KanbanGuest.ensureNamed() → Promise<account>: у гостя показывает окно и
+//   KanbanGuest.ensureNamed(action) → Promise<account>: у гостя показывает окно и
 //     создаёт аккаунт; у вошедшего пользователя сразу возвращает аккаунт.
+//     action — что гость пытался сделать (board_create, board_delete,
+//     board_order, board_save, password): для журнала событий — сервер
+//     записывает показ окна (guest.prompt) и действие, создавшее аккаунт.
+//   KanbanGuest.notePrompt(action) — сообщить серверу, что гостю показано
+//     окно имени (для окна «Ваше имя» из меню аккаунта).
+//
+// Сообщение о показе окна — fire-and-forget: ошибка сети не мешает гостю.
 //   KanbanGuest.setAccount(account) — сообщить свежие данные аккаунта
 //     (например, после смены логина через меню).
 //
@@ -28,10 +35,19 @@
     accountPromise = Promise.resolve(account);
   }
 
-  async function ensureNamed() {
+  function notePrompt(action) {
+    fetch('/api/account/name-prompt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: action || '' })
+    }).catch(() => {});
+  }
+
+  async function ensureNamed(action) {
     const account = await load();
     if (!account || !account.guest) return account;
     if (!naming) {
+      notePrompt(action);
       naming = window.KanbanDialog.form({
         title: 'Придумайте себе уникальное имя',
         fields: [{ name: 'nickname', label: '', maxLength: 30, autocomplete: 'off' }],
@@ -46,7 +62,7 @@
           const res = await fetch('/api/account/name', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name })
+            body: JSON.stringify({ name, action: action || '' })
           });
           let data = {};
           try { data = await res.json(); } catch (e) { /* пустой ответ */ }
@@ -62,5 +78,5 @@
     return naming;
   }
 
-  window.KanbanGuest = { load, ensureNamed, setAccount };
+  window.KanbanGuest = { load, ensureNamed, setAccount, notePrompt };
 })();

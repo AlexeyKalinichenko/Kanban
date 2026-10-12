@@ -17,3 +17,6 @@ Data/*.txt
 # Accounts (local only): user spaces, session secret
 Data/users/
 Data/secret.key
+
+# Event log (local only): logins, IP addresses
+Data/logs/
