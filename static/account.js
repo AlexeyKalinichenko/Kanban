@@ -37,6 +37,7 @@
     menu.innerHTML = '';
     if (account.canRename) addItem(account.guest ? 'Ваше имя' : 'Сменить логин', renameDialog);
     addItem(account.hasPassword ? 'Сменить пароль' : 'Задать пароль', passwordDialog);
+    if (account.isAdmin) addItem('Статистика', () => { window.location.href = '/admin'; });
     // гостю выходить не из чего — аккаунта ещё нет
     if (!account.guest) addItem('Выйти', logout, true);
 

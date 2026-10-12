@@ -22,6 +22,7 @@
 - GET    /                       — стартовая страница пространства
 - GET    /board/<id>             — доска
 - GET    /login                  — вход по логину и паролю
+- GET    /admin                  — статистика (только логинам из KANBAN_ADMINS)
 
 API аккаунта:
 - GET    /api/account            — логин, задан ли пароль, можно ли сменить логин
@@ -30,6 +31,7 @@ API аккаунта:
 - POST   /api/account/password   — задать / сменить пароль
 - POST   /api/login              — войти по логину и паролю
 - POST   /api/logout             — выйти
+- GET    /api/admin/stats?days=  — цифры для /admin (7, 30 или 90 дней)
 
 API досок (только доски текущего пользователя):
 - GET    /api/boards            — список всех досок (id + название)
@@ -51,10 +53,11 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta
-from flask import Flask, Response, g, jsonify, redirect, request, session
+from flask import Flask, Response, abort, g, jsonify, redirect, request, session
 
-from accounts import AccountStore, NAME_RULES_TEXT, PASSWORD_MAX, PASSWORD_MIN, VISITS_UNKNOWN
+from accounts import AccountStore, NAME_RULES_TEXT, PASSWORD_MAX, PASSWORD_MIN, VISITS_UNKNOWN, name_key
 from events import EventLog, fingerprint, is_bot, local_iso, short_user_agent
+import stats
 
 # Напоминание «Задайте пароль, чтобы не потерять доступ» показывается
 # начиная с этого захода в аккаунт (заход — см. accounts.VISIT_GAP_MINUTES)
@@ -825,6 +828,55 @@ def login_page():
 # API: аккаунт
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Администраторы (страница статистики /admin)
+# ---------------------------------------------------------------------------
+
+# Логины администраторов — через запятую в переменной окружения KANBAN_ADMINS
+# (KANBAN_ADMINS=alexey). Нужен заданный пароль: аккаунт без пароля
+# администратором не считается.
+ADMINS = {name_key(n) for n in os.environ.get("KANBAN_ADMINS", "").split(",") if n.strip()}
+
+
+def is_admin(user) -> bool:
+    return bool(user and user.get("password") and name_key(user["name"]) in ADMINS)
+
+
+_stats_cache = {}
+_stats_lock = threading.Lock()
+STATS_CACHE_SECONDS = 5 * 60
+STATS_PERIODS = (7, 30, 90)
+
+
+@app.route("/admin")
+def admin_page():
+    # остальным — «страницы нет», а не «нет доступа»: не выдаём, что она есть
+    if not is_admin(current_user()):
+        abort(404)
+    return render_page("admin.html")
+
+
+@app.route("/api/admin/stats", methods=["GET"])
+def admin_stats():
+    if not is_admin(current_user()):
+        abort(404)
+    days = request.args.get("days", type=int) or 30
+    if days not in STATS_PERIODS:
+        days = 30
+    fresh = request.args.get("fresh") == "1"
+    now = time.time()
+    with _stats_lock:
+        cached = _stats_cache.get(days)
+        if not fresh and cached and now - cached[0] < STATS_CACHE_SECONDS:
+            data = cached[1]
+        else:
+            data = stats.compute(os.path.join(DATA_DIR, "logs"), days, accounts.all_users())
+            _stats_cache[days] = (now, data)
+    response = jsonify(data)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def account_json(user: dict):
     return jsonify({
         "name": user["name"],
@@ -835,6 +887,8 @@ def account_json(user: dict):
         # напоминание «Задайте пароль…» — начиная с этого захода в аккаунт
         "visits": user.get("visits", VISITS_UNKNOWN),
         "passwordBannerFrom": PASSWORD_BANNER_FROM_VISIT,
+        # пункт «Статистика» в меню аккаунта
+        "isAdmin": is_admin(user),
     })
 
 

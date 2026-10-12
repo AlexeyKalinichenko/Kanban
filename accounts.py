@@ -313,6 +313,12 @@ class AccountStore:
             u = self._by_key.get(name_key(name))
             return dict(u) if u else None
 
+    def all_users(self) -> list:
+        """Копии всех аккаунтов (для статистики)."""
+        with self._lock:
+            self._ensure_loaded()
+            return [dict(u) for u in self._users]
+
     def count(self) -> int:
         with self._lock:
             self._ensure_loaded()
