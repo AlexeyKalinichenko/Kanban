@@ -354,6 +354,16 @@ async function loadBoards() {
 
 loadBoards();
 
+// Открыли недействующую ссылку-приглашение на доску (её выключили или
+// заменили новой) — сервер вернул сюда с ?invite=invalid
+if (new URLSearchParams(window.location.search).get('invite') === 'invalid') {
+  history.replaceState(null, '', '/');
+  window.KanbanDialog.alert({
+    title: 'Ссылка не действует',
+    message: 'Ссылку на доску выключили или заменили новой. Попросите владельца доски прислать новую ссылку.'
+  });
+}
+
 // --- Перетаскивание плиток досок (меняет порядок, сохраняется на сервере) ---
 let draggedTile = null;
 let orderBeforeDrag = '';

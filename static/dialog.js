@@ -3,6 +3,7 @@
 //
 //   KanbanDialog.confirm({ title, message, confirmLabel, cancelLabel, danger })
 //     → Promise<boolean>  (true — пользователь подтвердил)
+//   KanbanDialog.alert({ title, message, confirmLabel }) → Promise (окно с одной кнопкой)
 //   KanbanDialog.prompt({ title, message, value, placeholder, confirmLabel, cancelLabel, maxLength })
 //     → Promise<string|null>  (null — отмена)
 //   KanbanDialog.form({ title, message, fields, confirmLabel, cancelLabel, hideCancel, mandatory, noAutofill, onSubmit })
@@ -16,7 +17,7 @@
 (function () {
   let idCounter = 0;
 
-  function openDialog({ title, message, confirmLabel, cancelLabel, danger, input }) {
+  function openDialog({ title, message, confirmLabel, cancelLabel, danger, input, noCancel }) {
     return new Promise(resolve => {
       const uid = 'kanban-dialog-' + (++idCounter);
       const previousFocus = document.activeElement;
@@ -70,13 +71,13 @@
       okBtn.className = 'confirm-btn ' + (danger ? 'confirm-btn-danger' : 'confirm-btn-primary');
       okBtn.textContent = confirmLabel;
 
-      buttons.appendChild(cancelBtn);
+      if (!noCancel) buttons.appendChild(cancelBtn);
       buttons.appendChild(okBtn);
       dialog.appendChild(buttons);
       overlay.appendChild(dialog);
       document.body.appendChild(overlay);
 
-      const focusables = inputEl ? [inputEl, cancelBtn, okBtn] : [cancelBtn, okBtn];
+      const focusables = noCancel ? [okBtn] : (inputEl ? [inputEl, cancelBtn, okBtn] : [cancelBtn, okBtn]);
 
       function close(confirmed) {
         document.removeEventListener('keydown', onKey, true);
@@ -126,6 +127,10 @@
 
   function confirm({ title, message, confirmLabel = 'Удалить', cancelLabel = 'Отмена', danger = true }) {
     return openDialog({ title, message, confirmLabel, cancelLabel, danger });
+  }
+
+  function alert({ title, message, confirmLabel = 'Понятно' }) {
+    return openDialog({ title, message, confirmLabel, cancelLabel: '', danger: false, noCancel: true });
   }
 
   function prompt({ title, message, value = '', placeholder = '', confirmLabel = 'ОК', cancelLabel = 'Отмена', maxLength }) {
@@ -305,5 +310,5 @@
     });
   }
 
-  window.KanbanDialog = { confirm, prompt, form };
+  window.KanbanDialog = { confirm, alert, prompt, form };
 })();

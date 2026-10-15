@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Приглашение на доску</title>
+<link rel="stylesheet" href="/static/fonts/nunito.css">
+<link rel="stylesheet" href="/static/start.css">
+<link rel="stylesheet" href="/static/login.css">
+<link rel="stylesheet" href="/static/dialog.css">
+<script src="/static/theme.js"></script>
+</head>
+<body>
+
+<div class="page login-page invite-page">
+  <div class="header">
+    <div class="title" id="invite-title">Приглашение</div>
+    <p class="subtitle" id="invite-subtitle"></p>
+  </div>
+
+  <div class="login-card invite-card" id="invite-card" hidden>
+    <div class="invite-board" id="invite-board"></div>
+    <p class="invite-text" id="invite-text"></p>
+    <div class="login-error" id="invite-error" role="alert"></div>
+    <button class="login-btn login-btn-primary" id="invite-open" type="button">Открыть доску</button>
+  </div>
+
+  <a class="login-back" id="invite-login" href="/login" hidden>Уже есть аккаунт? Войти</a>
+  <a class="login-back" id="invite-home" href="/" hidden>Перейти к своим доскам</a>
+</div>
+
+<script src="/static/auth.js"></script>
+<script src="/static/dialog.js"></script>
+<script src="/static/guest.js"></script>
+<script src="/static/invite.js"></script>
+</body>
+</html>

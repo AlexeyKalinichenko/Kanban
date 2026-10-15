@@ -1,7 +1,7 @@
 // Доступ к доске (общие доски) — кнопка в верхней панели доски и окно.
 //
-// Владелец доски видит, кому она открыта, открывает доступ по логину и
-// закрывает его. Тот, кому доску открыли, видит владельца и остальных
+// Владелец доски видит, кому она открыта, открывает доступ по логину или по
+// ссылке-приглашению (её можно заменить новой или выключить) и закрывает доступ. Тот, кому доску открыли, видит владельца и остальных
 // участников и может убрать доску у себя. Права у всех одни: смотреть и
 // редактировать; удалить доску и управлять доступом может только владелец.
 //
@@ -107,7 +107,7 @@
       message.className = 'confirm-message';
       message.textContent = access.isOwner
         ? 'Пользователи из списка видят доску и могут её редактировать. Удалить доску можете только вы.'
-        : `Доску вам открыл ${access.owner.name}. Все из списка видят доску и могут её редактировать.`;
+        : `Владелец доски — ${access.owner.name}. Все из списка видят доску и могут её редактировать.`;
       dialog.appendChild(message);
 
       let input = null;
@@ -185,6 +185,8 @@
             submit();
           }
         });
+
+        dialog.appendChild(renderLink());
       }
 
       // список: владелец, затем те, кому открыт доступ
@@ -276,6 +278,119 @@
 
       if (focusInput && input) input.focus();
       else if (!input) done.focus();
+    }
+
+    // --- Доступ по ссылке (только у владельца) ---
+    async function linkRequest(method, body) {
+      if (busy) return;
+      busy = true;
+      try {
+        // гость: ссылка — изменение, сначала окно имени (создаётся аккаунт)
+        if (method === 'POST' && window.KanbanGuest) await window.KanbanGuest.ensureNamed('board_share');
+        const res = await fetch(`/api/board/${boardId}/link`, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body || {})
+        });
+        const data = await readJson(res);
+        if (res.ok) setAccess(data);
+      } catch (err) {
+        console.error('Не удалось изменить ссылку:', err);
+      }
+      busy = false;
+      render(false);
+    }
+
+    function copyText(text, inputEl) {
+      if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(text).then(() => true, () => false);
+      }
+      // без HTTPS (например, сервер в домашней сети) буфер обмена недоступен —
+      // старый способ через выделение текста в поле
+      inputEl.focus();
+      inputEl.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      return Promise.resolve(ok);
+    }
+
+    function renderLink() {
+      const box = document.createElement('div');
+      box.className = 'share-link';
+      const head = document.createElement('div');
+      head.className = 'share-link-head';
+      head.textContent = 'Доступ по ссылке';
+      box.appendChild(head);
+
+      if (!access.link) {
+        const row = document.createElement('div');
+        row.className = 'share-link-row';
+        const hint = document.createElement('div');
+        hint.className = 'share-link-hint';
+        hint.textContent = 'Кто откроет ссылку, получит доступ к доске.';
+        const create = document.createElement('button');
+        create.type = 'button';
+        create.className = 'confirm-btn confirm-btn-cancel share-link-create';
+        create.textContent = 'Создать ссылку';
+        create.addEventListener('click', () => linkRequest('POST'));
+        row.appendChild(hint);
+        row.appendChild(create);
+        box.appendChild(row);
+        return box;
+      }
+
+      const url = window.location.origin + access.link;
+      const row = document.createElement('div');
+      row.className = 'share-add-row share-link-url-row';
+      const field = document.createElement('input');
+      field.type = 'text';
+      field.readOnly = true;
+      field.className = 'confirm-input share-link-url';
+      field.value = url;
+      field.setAttribute('aria-label', 'Ссылка-приглашение');
+      field.addEventListener('focus', () => field.select());
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'confirm-btn confirm-btn-primary share-add-btn share-link-copy';
+      copy.textContent = 'Скопировать';
+      copy.addEventListener('click', async () => {
+        const ok = await copyText(url, field);
+        copy.textContent = ok ? 'Скопировано' : 'Выделите и скопируйте';
+        setTimeout(() => { copy.textContent = 'Скопировать'; }, 1800);
+      });
+      row.appendChild(field);
+      row.appendChild(copy);
+      box.appendChild(row);
+
+      const hint = document.createElement('div');
+      hint.className = 'share-link-hint';
+      hint.textContent = 'Кто откроет ссылку, получит доступ к доске и появится в списке ниже.';
+      box.appendChild(hint);
+
+      const actions = document.createElement('div');
+      actions.className = 'share-link-actions';
+      const reset = document.createElement('button');
+      reset.type = 'button';
+      reset.className = 'share-link-action';
+      reset.textContent = 'Заменить ссылку';
+      reset.addEventListener('click', async () => {
+        const ok = await window.KanbanDialog.confirm({
+          title: 'Заменить ссылку?',
+          message: 'Старая ссылка перестанет работать. Те, кто уже открыл доску по ней, сохранят доступ.',
+          confirmLabel: 'Заменить',
+          danger: false
+        });
+        if (ok) linkRequest('POST', { reset: true });
+      });
+      const off = document.createElement('button');
+      off.type = 'button';
+      off.className = 'share-link-action';
+      off.textContent = 'Выключить ссылку';
+      off.addEventListener('click', () => linkRequest('DELETE'));
+      actions.appendChild(reset);
+      actions.appendChild(off);
+      box.appendChild(actions);
+      return box;
     }
 
     render(true);

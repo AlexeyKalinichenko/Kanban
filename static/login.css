@@ -107,3 +107,20 @@
   .theme-toggle-btn { right: 16px; top: 16px; }
   .title { font-size: 36px; }
 }
+
+/* Страница приглашения на доску (invite.html) — на основе страницы входа */
+.invite-card[hidden] { display: none; }
+
+.invite-board {
+  font-size: 22px;
+  line-height: 1.3;
+  font-weight: 600;
+  word-wrap: break-word;
+}
+
+.invite-text {
+  margin: -8px 0 0;
+  color: var(--text2);
+  font-size: 14px;
+  line-height: 1.5;
+}

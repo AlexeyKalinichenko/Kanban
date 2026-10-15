@@ -43,6 +43,14 @@ API досок (свои доски и чужие, к которым откры�
 - POST   /api/board/<id>         — сохранить (перезаписать) содержимое доски
   (чужая общая доска — те же адреса с ?owner=<id владельца>)
 
+Ссылка-приглашение (общие доски):
+- GET    /invite/<секрет>         — открыть доступ по ссылке (гостю — страница
+                                   приглашения: сначала имя, затем доска)
+- GET    /api/invite/<секрет>     — владелец и название доски (для страницы приглашения)
+- POST   /api/invite/<секрет>     — принять приглашение
+- POST   /api/board/<id>/link     — включить ссылку ({"reset": true} — новая вместо старой)
+- DELETE /api/board/<id>/link     — выключить ссылку
+
 API доступа к доске (общие доски, см. shares.py):
 - GET    /api/board/<id>/access               — владелец и те, кому открыт доступ
 - POST   /api/board/<id>/access               — открыть доступ по логину (только владелец)
@@ -702,6 +710,8 @@ CREATE_TRIGGERS = {
     "delete_board": "board_delete",
     "save_boards_order": "board_order",
     "add_board_access": "board_share",
+    "set_board_link": "board_share",
+    "join_invite": "invite",
 }
 GUEST_ACTIONS = set(CREATE_TRIGGERS.values())
 
@@ -1283,12 +1293,17 @@ def access_info(board_id: str, owner_id: str) -> dict:
         u = accounts.get(s["user"])
         if u:
             users.append({"id": u["id"], "name": u["name"], "me": u["id"] == me})
-    return {
+    info = {
         "isOwner": not owner_id,
         "owner": {"id": owner_key, "name": owner["name"] if owner else GUEST_NAME,
                   "me": not owner_id},
         "users": users,
     }
+    if not owner_id:
+        # ссылку-приглашение видит только владелец
+        token = shares.link_for(owner_key, board_id) if owner_key else None
+        info["link"] = f"/invite/{token}" if token else None
+    return info
 
 
 @app.route("/api/board/<board_id>/access", methods=["GET"])
@@ -1359,6 +1374,119 @@ def remove_board_access(board_id, user_id):
     if owner_id != user["id"]:
         return jsonify({"status": "ok"})
     return jsonify(access_info(board_id, ""))
+
+
+@app.route("/api/board/<board_id>/link", methods=["POST"])
+def set_board_link(board_id):
+    """Включить ссылку-приглашение на свою доску ({"reset": true} — выдать
+    новую ссылку вместо старой: старая перестаёт работать, а доступ, уже
+    полученный по ней, остаётся)."""
+    if request_owner() and not (current_user() and request_owner() == current_user()["id"]):
+        return json_error("Ссылкой на доску управляет только её владелец.", 403)
+    path, _ = resolve_board(board_id)
+    if not path:
+        return jsonify({"error": "not found"}), 404
+    payload = request.get_json(force=True, silent=True) or {}
+    # гость: ссылка — изменение, сначала создаётся аккаунт
+    user, error_response = ensure_user()
+    if error_response:
+        return error_response
+    if not os.path.exists(board_file_path(board_id)):
+        return jsonify({"error": "not found"}), 404
+    existing = shares.link_for(user["id"], board_id)
+    if not existing or payload.get("reset"):
+        shares.set_link(user["id"], board_id)
+        events.write("board.link", uid=user["id"], name=user["name"], board=board_id,
+                     action="reset" if existing else "create", ip=client_ip())
+    return jsonify(access_info(board_id, ""))
+
+
+@app.route("/api/board/<board_id>/link", methods=["DELETE"])
+def disable_board_link(board_id):
+    """Выключить ссылку-приглашение (доступ, уже полученный по ней, остаётся)."""
+    user = current_user()
+    if not user or (request_owner() and request_owner() != user["id"]):
+        return json_error("Ссылкой на доску управляет только её владелец.", 403)
+    if not is_valid_board_id(board_id):
+        return jsonify({"error": "invalid id"}), 400
+    if shares.disable_link(user["id"], board_id):
+        events.write("board.link", uid=user["id"], name=user["name"], board=board_id,
+                     action="off", ip=client_ip())
+    return jsonify(access_info(board_id, ""))
+
+
+# ---------------------------------------------------------------------------
+# Ссылка-приглашение: /invite/<секрет>
+# ---------------------------------------------------------------------------
+
+def invite_target(token: str):
+    """Доска по ссылке-приглашению: (владелец, id доски, путь к файлу) или None,
+    если ссылка выключена, сброшена или доски уже нет."""
+    link = shares.find_link(token)
+    if not link:
+        return None
+    owner = accounts.get(link["owner"])
+    if not owner:
+        return None
+    path = os.path.join(accounts.user_dir(owner["id"]), f"{link['board']}.txt")
+    if not os.path.exists(path):
+        return None
+    return owner, link["board"], path
+
+
+def join_by_invite(user: dict, token: str):
+    """Открывает пользователю доступ по ссылке. Возвращает адрес доски или None."""
+    target = invite_target(token)
+    if not target:
+        return None
+    owner, board_id, _ = target
+    if owner["id"] == user["id"]:
+        return f"/board/{board_id}"  # своя доска
+    if shares.add(owner["id"], board_id, user["id"]):
+        events.write("board.share", uid=owner["id"], name=owner["name"], board=board_id,
+                     to_uid=user["id"], to_name=user["name"], via="link", ip=client_ip())
+    return f"/board/{owner['id']}/{board_id}"
+
+
+@app.route("/invite/<token>")
+def invite_page(token):
+    user = current_user()
+    if user:
+        # вошедший пользователь сразу получает доступ и попадает на доску
+        url = join_by_invite(user, token)
+        return redirect(url or "/?invite=invalid")
+    # гость (или новый посетитель): страница приглашения — сначала нужно имя
+    start_guest()
+    return render_page("invite.html")
+
+
+@app.route("/api/invite/<token>", methods=["GET"])
+def get_invite(token):
+    """Что за доска по ссылке — для страницы приглашения."""
+    target = invite_target(token)
+    if not target:
+        return jsonify({"error": "not found"}), 404
+    owner, board_id, path = target
+    summary = board_summary(board_id, path) or {}
+    response = jsonify({"ownerName": owner["name"],
+                        "title": summary.get("title") or DEFAULT_BOARD_TITLE})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/api/invite/<token>", methods=["POST"])
+def join_invite(token):
+    """Принять приглашение: гостю сначала создаётся аккаунт (окно имени
+    показывает страница приглашения), затем открывается доступ."""
+    if not invite_target(token):
+        return json_error("Ссылка больше не действует. Попросите владельца доски прислать новую.", 404)
+    user, error_response = ensure_user()
+    if error_response:
+        return error_response
+    url = join_by_invite(user, token)
+    if not url:
+        return json_error("Ссылка больше не действует. Попросите владельца доски прислать новую.", 404)
+    return jsonify({"url": url})
 
 
 if __name__ == "__main__":
