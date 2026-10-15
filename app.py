@@ -20,7 +20,8 @@
 
 Страницы:
 - GET    /                       — стартовая страница пространства
-- GET    /board/<id>             — доска
+- GET    /board/<id>             — своя доска
+- GET    /board/<владелец>/<id>  — чужая доска, к которой открыт доступ (общие доски)
 - GET    /login                  — вход по логину и паролю
 - GET    /admin                  — статистика (только логинам из KANBAN_ADMINS)
 
@@ -33,13 +34,20 @@ API аккаунта:
 - POST   /api/logout             — выйти
 - GET    /api/admin/stats?days=  — цифры для /admin (7, 30 или 90 дней)
 
-API досок (только доски текущего пользователя):
+API досок (свои доски и чужие, к которым открыт доступ):
 - GET    /api/boards            — список всех досок (id + название)
 - POST   /api/boards             — создать новую доску, возвращает её id
 - DELETE /api/boards/<id>        — удалить доску (удаляет файл)
 - POST   /api/boards/order       — сохранить порядок досок на стартовой странице
 - GET    /api/board/<id>         — прочитать содержимое доски
 - POST   /api/board/<id>         — сохранить (перезаписать) содержимое доски
+  (чужая общая доска — те же адреса с ?owner=<id владельца>)
+
+API доступа к доске (общие доски, см. shares.py):
+- GET    /api/board/<id>/access               — владелец и те, кому открыт доступ
+- POST   /api/board/<id>/access               — открыть доступ по логину (только владелец)
+- DELETE /api/board/<id>/access/<uid | me>    — закрыть доступ (владелец — любому,
+                                                получатель — только себе)
 
 Данные хранятся в человекочитаемом текстовом файле (см. формат ниже),
 а не в базе данных — по условию задачи.
@@ -58,6 +66,7 @@ from flask import Flask, Response, abort, g, jsonify, redirect, request, session
 from accounts import AccountStore, NAME_RULES_TEXT, PASSWORD_MAX, PASSWORD_MIN, VISITS_UNKNOWN, name_key
 from events import EventLog, fingerprint, is_bot, local_iso, short_user_agent
 import stats
+from shares import ShareStore
 
 # Напоминание «Задайте пароль, чтобы не потерять доступ» показывается
 # начиная с этого захода в аккаунт (заход — см. accounts.VISIT_GAP_MINUTES)
@@ -104,8 +113,13 @@ def is_untouched_template_board(path: str, board_id: str) -> bool:
     return original == current
 
 
-# функции разбора досок определены ниже — передаём обёртку
-accounts = AccountStore(DATA_DIR, lambda path, board_id: is_untouched_template_board(path, board_id))
+# Общие доски (кому владелец открыл доступ) — Data/shares.txt, см. shares.py
+shares = ShareStore(DATA_DIR)
+
+# функции разбора досок определены ниже — передаём обёртку; аккаунт с общими
+# досками при чистке пустым не считается
+accounts = AccountStore(DATA_DIR, lambda path, board_id: is_untouched_template_board(path, board_id),
+                        has_shared_boards=shares.involves)
 events = EventLog(DATA_DIR)
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
@@ -230,6 +244,30 @@ def copy_template_boards(user_id: str) -> None:
 
 def board_file_path(board_id: str) -> str:
     return os.path.join(user_boards_dir(), f"{board_id}.txt")
+
+
+def resolve_board(board_id: str, owner_id: str = ""):
+    """Файл доски, которую текущий пользователь может открыть и править:
+    свою (owner_id пустой или свой) или чужую, к которой ему открыт доступ.
+    Возвращает (путь к файлу, id владельца или "" для своей доски) или
+    (None, None), если такой доски нет или доступа к ней нет."""
+    if not is_valid_board_id(board_id):
+        return None, None
+    user = current_user()
+    if not owner_id or (user and owner_id == user["id"]):
+        path = board_file_path(board_id)
+        return (path, "") if os.path.exists(path) else (None, None)
+    if not user or not is_valid_board_id(owner_id):
+        return None, None
+    if not shares.has(owner_id, board_id, user["id"]):
+        return None, None
+    path = os.path.join(accounts.user_dir(owner_id), f"{board_id}.txt")
+    return (path, owner_id) if os.path.exists(path) else (None, None)
+
+
+def request_owner() -> str:
+    """Владелец доски из запроса (?owner=<id>) — для чужих общих досок."""
+    return str(request.args.get("owner") or "").strip()
 
 
 # Порядок досок на стартовой странице (меняется перетаскиванием плиток).
@@ -663,6 +701,7 @@ CREATE_TRIGGERS = {
     "save_board": "board_save",
     "delete_board": "board_delete",
     "save_boards_order": "board_order",
+    "add_board_access": "board_share",
 }
 GUEST_ACTIONS = set(CREATE_TRIGGERS.values())
 
@@ -735,6 +774,9 @@ def _housekeeping(do_cleanup: bool) -> None:
             for u in accounts.cleanup():
                 events.write("account.delete", uid=u["id"], name=u["name"],
                              reason="cleanup", age_days=u["age_days"])
+                # у удалённого аккаунта общих досок нет (иначе его бы не
+                # удалили), но на всякий случай убираем его доступы
+                shares.remove_user(u["id"])
             events.prune()
     except Exception as err:  # фоновая уборка не должна ронять сервер
         print("[accounts] ошибка чистки:", err)
@@ -808,11 +850,14 @@ def index():
 
 
 @app.route("/board/<board_id>")
-def board_page(board_id):
+@app.route("/board/<owner_id>/<board_id>")
+def board_page(board_id, owner_id=""):
+    """Своя доска — /board/<id>, чужая общая — /board/<id владельца>/<id>."""
     if not current_user() and not session.get("guest"):
         return redirect("/")
-    # чужая или удалённая доска — на стартовую страницу своего пространства
-    if not is_valid_board_id(board_id) or not os.path.exists(board_file_path(board_id)):
+    # удалённая доска или доска, к которой нет доступа, — на стартовую страницу
+    path, _ = resolve_board(board_id, owner_id)
+    if not path:
         return redirect("/")
     return render_page("board.html")
 
@@ -1015,9 +1060,55 @@ def logout():
 # API: список досок
 # ---------------------------------------------------------------------------
 
+def board_summary(board_id: str, path: str):
+    """Данные доски для плитки на стартовой странице (или None, если файла нет)."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = parse_board(f.read())
+    except OSError:
+        return None
+    return {
+        "id": board_id,
+        "title": data.get("title") or DEFAULT_BOARD_TITLE,
+        "background": data.get("background") or "",
+        "columns_count": len(data.get("columns", [])),
+        # для плитки на стартовой: всего задач и разбивка по столбцам
+        "tasks_count": sum(len(c.get("cards", [])) for c in data.get("columns", [])),
+        "columns": [
+            {"title": c.get("title", ""), "count": len(c.get("cards", []))}
+            for c in data.get("columns", [])
+        ],
+        "_created": data.get("created") or "",
+    }
+
+
+def shared_with_me() -> list:
+    """Чужие доски, открытые текущему пользователю (раздел «Доступные мне»),
+    в порядке, в котором открывали доступ."""
+    user = current_user()
+    if not user:
+        return []
+    result = []
+    for s in shares.boards_for(user["id"]):
+        owner = accounts.get(s["owner"])
+        if not owner:
+            continue
+        path = os.path.join(accounts.user_dir(owner["id"]), f"{s['board']}.txt")
+        summary = board_summary(s["board"], path)
+        if not summary:
+            continue
+        del summary["_created"]
+        summary["owner"] = owner["id"]
+        summary["ownerName"] = owner["name"]
+        result.append(summary)
+    return result
+
+
 @app.route("/api/boards", methods=["GET"])
 def list_boards():
     folder = user_boards_dir()  # у гостя — шаблонные доски
+    user = current_user()
+    share_counts = shares.counts_for_owner(user["id"]) if user else {}
     boards = []
     for filename in os.listdir(folder):
         if not filename.endswith(".txt"):
@@ -1025,26 +1116,11 @@ def list_boards():
         board_id = filename[:-4]
         if not is_valid_board_id(board_id):
             continue
-        path = os.path.join(folder, filename)
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                text = f.read()
-        except OSError:
-            continue
-        data = parse_board(text)
-        boards.append({
-            "id": board_id,
-            "title": data.get("title") or DEFAULT_BOARD_TITLE,
-            "background": data.get("background") or "",
-            "columns_count": len(data.get("columns", [])),
-            # для плитки на стартовой: всего задач и разбивка по столбцам
-            "tasks_count": sum(len(c.get("cards", [])) for c in data.get("columns", [])),
-            "columns": [
-                {"title": c.get("title", ""), "count": len(c.get("cards", []))}
-                for c in data.get("columns", [])
-            ],
-            "_created": data.get("created") or "",
-        })
+        summary = board_summary(board_id, os.path.join(folder, filename))
+        if summary:
+            # скольким пользователям владелец открыл доску (значок на плитке)
+            summary["sharedWith"] = share_counts.get(board_id, 0)
+            boards.append(summary)
 
     # Порядок досок по умолчанию: сначала старые доски без даты создания
     # (по алфавиту), затем доски с датой создания — от старых к новым.
@@ -1058,7 +1134,7 @@ def list_boards():
     order = {board_id: i for i, board_id in enumerate(read_board_order())}
     if order:
         boards.sort(key=lambda b: (0, order[b["id"]]) if b["id"] in order else (1, 0))
-    response = jsonify({"boards": boards})
+    response = jsonify({"boards": boards, "shared": shared_with_me()})
     # список досок всегда должен быть свежим (не из кэша браузера)
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -1099,6 +1175,10 @@ def delete_board(board_id):
     path = board_file_path(board_id)
     if os.path.exists(path):
         os.remove(path)
+    # удалить доску может только владелец — у всех, кому она была открыта, она пропадает
+    for s in shares.remove_board(user["id"], board_id):
+        events.write("board.unshare", uid=user["id"], name=user["name"], board=board_id,
+                     to_uid=s["user"], reason="board_delete", ip=client_ip())
     order = read_board_order()
     if board_id in order:
         write_board_order([i for i in order if i != board_id])
@@ -1129,13 +1209,17 @@ def save_boards_order():
 def get_board(board_id):
     if not is_valid_board_id(board_id):
         return jsonify({"error": "invalid id"}), 400
-    path = board_file_path(board_id)
-    if not os.path.exists(path):
-        # доски нет в пространстве этого пользователя (удалена или чужая)
+    path, owner_id = resolve_board(board_id, request_owner())
+    if not path:
+        # доска удалена или к ней нет доступа (в том числе доступ закрыли)
         return jsonify({"error": "not found"}), 404
     with open(path, "r", encoding="utf-8") as f:
         text = f.read()
-    return jsonify(parse_board(text))
+    data = parse_board(text)
+    data["access"] = access_info(board_id, owner_id)
+    response = jsonify(data)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/api/board/<board_id>", methods=["POST"])
@@ -1145,18 +1229,20 @@ def save_board(board_id):
     if not current_user():
         # гость: сохранение шаблонной доски — первое изменение, создаём аккаунт
         # (шаблоны копируются в него с теми же id) и сохраняем уже его копию
-        if not os.path.exists(board_file_path(board_id)):
+        if request_owner() or not os.path.exists(board_file_path(board_id)):
             return jsonify({"error": "not found"}), 404
         user, error_response = ensure_user()
         if error_response:
             return error_response
     payload = request.get_json(force=True, silent=True) or {}
-    path = board_file_path(board_id)
+    payload.pop("access", None)
+    # своя доска или чужая, к которой открыт доступ (права у всех одни:
+    # смотреть и править)
+    path, _ = resolve_board(board_id, request_owner())
+    if not path:
+        return jsonify({"error": "not found"}), 404
     # Дату создания хранит только сервер: браузер её не присылает,
     # поэтому переносим её из текущего файла, чтобы она не терялась при сохранении.
-    if not os.path.exists(path):
-        # сохранять можно только существующую доску своего пространства
-        return jsonify({"error": "not found"}), 404
     with open(path, "r", encoding="utf-8") as f:
         current = parse_board(f.read())
     payload["created"] = current.get("created", "")
@@ -1173,6 +1259,106 @@ def save_board(board_id):
                 t["label"] = label[:TAG_LABEL_MAX].strip()
     write_text_atomic(path, serialize_board(payload))
     return jsonify({"status": "ok"})
+
+
+# ---------------------------------------------------------------------------
+# API: доступ к доске (общие доски)
+# ---------------------------------------------------------------------------
+
+# Поиск пользователя по логину, чтобы открыть ему доступ: не больше стольких
+# неудачных попыток (логин не найден) за окно — иначе можно перебором
+# выяснять, какие логины существуют
+SHARE_LOOKUP_LIMIT, SHARE_LOOKUP_WINDOW = 30, 15 * 60
+
+
+def access_info(board_id: str, owner_id: str) -> dict:
+    """Кто имеет доступ к доске: владелец и те, кому он её открыл.
+    owner_id — "" для своей доски (или шаблонной доски гостя)."""
+    user = current_user()
+    me = user["id"] if user else ""
+    owner = accounts.get(owner_id) if owner_id else user
+    owner_key = owner["id"] if owner else ""
+    users = []
+    for s in shares.users_for(owner_key, board_id) if owner_key else []:
+        u = accounts.get(s["user"])
+        if u:
+            users.append({"id": u["id"], "name": u["name"], "me": u["id"] == me})
+    return {
+        "isOwner": not owner_id,
+        "owner": {"id": owner_key, "name": owner["name"] if owner else GUEST_NAME,
+                  "me": not owner_id},
+        "users": users,
+    }
+
+
+@app.route("/api/board/<board_id>/access", methods=["GET"])
+def get_board_access(board_id):
+    path, owner_id = resolve_board(board_id, request_owner())
+    if not path:
+        return jsonify({"error": "not found"}), 404
+    response = jsonify(access_info(board_id, owner_id))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/api/board/<board_id>/access", methods=["POST"])
+def add_board_access(board_id):
+    """Открыть доступ к своей доске пользователю с указанным логином.
+    Открывать доступ может только владелец доски."""
+    if request_owner() and not (current_user() and request_owner() == current_user()["id"]):
+        return json_error("Открыть доступ к доске может только её владелец.", 403)
+    path, _ = resolve_board(board_id)
+    if not path:
+        return jsonify({"error": "not found"}), 404
+    payload = request.get_json(force=True, silent=True) or {}
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return json_error("Введите логин пользователя.")
+    # гость: открыть доступ к шаблонной доске — изменение, сначала создаётся
+    # аккаунт (шаблоны копируются в него с теми же id)
+    user, error_response = ensure_user()
+    if error_response:
+        return error_response
+    if not os.path.exists(board_file_path(board_id)):
+        return jsonify({"error": "not found"}), 404
+    ip = client_ip()
+    if is_limited("share_lookup", user["id"], SHARE_LOOKUP_LIMIT, SHARE_LOOKUP_WINDOW):
+        return json_error("Слишком много попыток. Попробуйте через 15 минут.", 429)
+    target = accounts.find_by_lookalike(name)
+    if not target:
+        add_hit("share_lookup", user["id"])
+        return json_error("Пользователь с таким логином не найден.")
+    if target["id"] == user["id"]:
+        return json_error("Это ваш логин — доска и так ваша.")
+    if not shares.add(user["id"], board_id, target["id"]):
+        return json_error(f"У пользователя {target['name']} уже есть доступ.")
+    events.write("board.share", uid=user["id"], name=user["name"], board=board_id,
+                 to_uid=target["id"], to_name=target["name"], ip=ip)
+    return jsonify(access_info(board_id, ""))
+
+
+@app.route("/api/board/<board_id>/access/<user_id>", methods=["DELETE"])
+def remove_board_access(board_id, user_id):
+    """Закрыть доступ. Владелец может закрыть доступ любому; получатель —
+    только себе (убрать чужую доску у себя из списка)."""
+    user = current_user()
+    if not user:
+        return jsonify({"error": "not found"}), 404
+    if user_id == "me":
+        user_id = user["id"]
+    owner_id = request_owner() or user["id"]
+    if owner_id != user["id"] and user_id != user["id"]:
+        return json_error("Закрыть доступ другим может только владелец доски.", 403)
+    if not is_valid_board_id(board_id) or not is_valid_board_id(user_id):
+        return jsonify({"error": "invalid id"}), 400
+    if shares.remove(owner_id, board_id, user_id):
+        owner = accounts.get(owner_id)
+        events.write("board.unshare", uid=owner_id, name=owner["name"] if owner else None,
+                     board=board_id, to_uid=user_id,
+                     reason="owner" if owner_id == user["id"] else "leave", ip=client_ip())
+    if owner_id != user["id"]:
+        return jsonify({"status": "ok"})
+    return jsonify(access_info(board_id, ""))
 
 
 if __name__ == "__main__":

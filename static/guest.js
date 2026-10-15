@@ -6,7 +6,7 @@
 //   KanbanGuest.ensureNamed(action) → Promise<account>: у гостя показывает окно и
 //     создаёт аккаунт; у вошедшего пользователя сразу возвращает аккаунт.
 //     action — что гость пытался сделать (board_create, board_delete,
-//     board_order, board_save, password): для журнала событий — сервер
+//     board_order, board_save, board_share, password): для журнала событий — сервер
 //     записывает показ окна (guest.prompt) и действие, создавшее аккаунт.
 //   KanbanGuest.notePrompt(action) — сообщить серверу, что гостю показано
 //     окно имени (для окна «Ваше имя» из меню аккаунта).

@@ -136,6 +136,70 @@ svg { display: block; flex-shrink: 0; }
   font-weight: 500;
 }
 
+/* строка с числом задач; справа — значок «доступ открыт N пользователям» */
+.board-tile-count-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.board-tile-shared,
+.board-tile-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text2);
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 600;
+  min-width: 0;
+}
+
+/* чья доска (раздел «Доступные мне») — под названием */
+.board-tile-owner {
+  margin-top: -8px;
+}
+
+.board-tile-owner span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-tile[data-bg] .board-tile-shared,
+.board-tile[data-bg] .board-tile-owner {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.board-tile[data-bg="yellow"] .board-tile-shared,
+.board-tile[data-bg="yellow"] .board-tile-owner {
+  color: rgba(28, 28, 30, 0.75);
+}
+
+/* раздел «Доступные мне» */
+.shared-section {
+  margin-top: 64px;
+}
+
+.shared-section[hidden] { display: none; }
+
+.section-title {
+  text-align: center;
+  font-size: 28px;
+  line-height: 1.25;
+  font-weight: 500;
+  margin: 0 0 8px;
+}
+
+.section-subtitle {
+  text-align: center;
+  color: var(--text2);
+  font-size: 15px;
+  line-height: 1.5;
+  margin: 0 0 32px;
+}
+
 /* дорожка под полоской — чтобы цветные отрезки читались на любом фоне плитки */
 .board-tile-bar {
   display: flex;

@@ -1,6 +1,6 @@
-// Стартовая страница: показывает все доски (сколько файлов в папке Data —
-// столько плиток здесь отображается), позволяет создать новую доску
-// и удалить существующую.
+// Стартовая страница: показывает все доски пользователя, позволяет создать
+// новую доску и удалить существующую. Ниже — раздел «Доступные мне»: чужие
+// доски, к которым пользователю открыли доступ.
 
 const boardsGrid = document.getElementById('boards-grid');
 
@@ -16,6 +16,7 @@ const ICONS = {
   arrowUp: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
   arrowDown: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
   arrowLeft: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>',
+  users: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.5A6.5 6.5 0 0 1 21.5 20"/></svg>',
   arrowRight: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'
 };
 
@@ -78,12 +79,21 @@ function createAddTile() {
   return tile;
 }
 
-function createBoardTile(board) {
+function wordForPeople(count) {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'пользователю';
+  return 'пользователям';
+}
+
+// shared — чужая доска из раздела «Доступные мне»: открывается по адресу
+// /board/<владелец>/<доска>, не перетаскивается, крестик убирает её из списка
+function createBoardTile(board, shared = false) {
   const tile = document.createElement('a');
   tile.className = 'board-tile';
-  tile.href = `/board/${board.id}`;
+  tile.href = shared ? `/board/${board.owner}/${board.id}` : `/board/${board.id}`;
   tile.dataset.id = board.id;
-  tile.draggable = true;
+  tile.draggable = !shared;
   // плитка окрашивается в цвет фона доски (если он задан)
   if (board.background) {
     tile.dataset.bg = board.background;
@@ -125,18 +135,34 @@ function createBoardTile(board) {
     bar.appendChild(empty);
   }
 
-  meta.appendChild(count);
+  const countRow = document.createElement('div');
+  countRow.className = 'board-tile-count-row';
+  countRow.appendChild(count);
+  // своя доска, открытая другим, — значок с числом пользователей
+  if (!shared && board.sharedWith > 0) {
+    const badge = document.createElement('span');
+    badge.className = 'board-tile-shared';
+    badge.innerHTML = ICONS.users + '<span></span>';
+    badge.lastChild.textContent = board.sharedWith;
+    badge.title = `Доступ открыт ${board.sharedWith} ${wordForPeople(board.sharedWith)}`;
+    countRow.appendChild(badge);
+  }
+  meta.appendChild(countRow);
   meta.appendChild(bar);
 
   const deleteBtn = document.createElement('button');
   deleteBtn.type = 'button';
   deleteBtn.className = 'board-tile-delete';
   deleteBtn.innerHTML = ICONS.close;
-  deleteBtn.title = 'Удалить доску';
-  deleteBtn.setAttribute('aria-label', 'Удалить доску');
+  deleteBtn.title = shared ? 'Убрать у себя' : 'Удалить доску';
+  deleteBtn.setAttribute('aria-label', deleteBtn.title);
   deleteBtn.addEventListener('click', async (e) => {
     e.preventDefault();
     e.stopPropagation();
+    if (shared) {
+      await leaveSharedBoard(board, tile);
+      return;
+    }
     // гость: удаление доски создаёт аккаунт — сначала «Как вас зовут?»
     if (window.KanbanAccount) await window.KanbanAccount.askNameIfGuest('board_delete');
     const ok = await window.KanbanDialog.confirm({
@@ -214,12 +240,46 @@ function createBoardTile(board) {
   const head = document.createElement('div');
   head.className = 'board-tile-head';
   head.appendChild(title);
-  head.appendChild(moveWrap);
+  if (!shared) head.appendChild(moveWrap);
   head.appendChild(deleteBtn);
 
   tile.appendChild(head);
+  if (shared) {
+    // чья это доска
+    const owner = document.createElement('div');
+    owner.className = 'board-tile-owner';
+    owner.innerHTML = ICONS.users + '<span></span>';
+    owner.lastChild.textContent = board.ownerName;
+    owner.title = `Доска пользователя ${board.ownerName}`;
+    tile.appendChild(owner);
+  }
   tile.appendChild(meta);
   return tile;
+}
+
+// Убрать чужую доску у себя из раздела «Доступные мне» (доступ закрывается;
+// снова открыть его может только владелец)
+async function leaveSharedBoard(board, tile) {
+  const ok = await window.KanbanDialog.confirm({
+    title: `Убрать доску «${board.title}»?`,
+    message: `Доска пропадёт из вашего списка. Снова открыть вам доступ сможет только её владелец — ${board.ownerName}.`,
+    confirmLabel: 'Убрать'
+  });
+  if (!ok) return;
+  try {
+    await fetch(`/api/board/${board.id}/access/me?owner=${encodeURIComponent(board.owner)}`, { method: 'DELETE' });
+    tile.remove();
+    refreshSharedSection();
+  } catch (err) {
+    console.error('Не удалось убрать доску:', err);
+  }
+}
+
+const sharedSection = document.getElementById('shared-section');
+const sharedGrid = document.getElementById('shared-grid');
+
+function refreshSharedSection() {
+  sharedSection.hidden = !sharedGrid.querySelector('.board-tile');
 }
 
 function closeTileMenus() {
@@ -280,6 +340,12 @@ async function loadBoards() {
     });
     boardsGrid.appendChild(createAddTile());
     refreshEmptyHint();
+
+    // чужие доски, к которым открыт доступ
+    (data.shared || []).forEach(board => {
+      sharedGrid.appendChild(createBoardTile(board, true));
+    });
+    refreshSharedSection();
   } catch (err) {
     console.error('Не удалось загрузить список досок:', err);
     boardsGrid.appendChild(createAddTile());

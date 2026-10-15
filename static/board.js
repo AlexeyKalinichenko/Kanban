@@ -1,10 +1,14 @@
-  // Каждая доска хранится в своём файле на сервере (Data/<guid>.txt).
-  // ID доски берётся из URL вида /board/<guid>.
-  // При загрузке страницы доска запрашивается через GET /api/board/<id>.
+  // Каждая доска хранится в своём файле на сервере (Data/users/<владелец>/<guid>.txt).
+  // ID доски берётся из URL: своя доска — /board/<guid>, чужая общая доска
+  // (к которой открыт доступ) — /board/<id владельца>/<guid>.
+  // При загрузке страницы доска запрашивается через GET /api/board/<id>[?owner=<id владельца>].
   // Если файла нет или он пуст — доска отображается пустой (без столбцов).
-  // При любом изменении в UI доска целиком пересохраняется через POST /api/board/<id>.
-  const BOARD_ID = window.location.pathname.split('/').filter(Boolean)[1] || '';
-  const BOARD_API_URL = `/api/board/${BOARD_ID}`;
+  // При любом изменении в UI доска целиком пересохраняется через POST по тому же адресу.
+  const PATH_PARTS = window.location.pathname.split('/').filter(Boolean);
+  const BOARD_OWNER = PATH_PARTS.length > 2 ? PATH_PARTS[1] : '';
+  const BOARD_ID = PATH_PARTS[PATH_PARTS.length > 2 ? 2 : 1] || '';
+  const BOARD_API_URL = `/api/board/${BOARD_ID}` +
+    (BOARD_OWNER ? `?owner=${encodeURIComponent(BOARD_OWNER)}` : '');
 
   if (!BOARD_ID) {
     // на страницу доски попали без id — возвращаемся на стартовую страницу
@@ -1851,6 +1855,9 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(serializeBoard())
+    }).then(res => {
+      // доску удалили или владелец закрыл доступ — возвращаемся к списку досок
+      if (res.status === 404) window.location.href = '/';
     }).catch(err => console.error('Не удалось сохранить доску:', err));
   }
 
@@ -1875,6 +1882,8 @@
       if (data.title) {
         boardTitleInput.value = data.title;
       }
+      // кто имеет доступ к доске — значок на кнопке «Доступ»
+      if (window.KanbanShare) window.KanbanShare.setAccess(data.access);
       fitBoardTitle();
       // цвет фона доски (пустая строка — обычный фон)
       if (window.KanbanBoardBg) {
@@ -1921,6 +1930,13 @@
   }
 
   if (BOARD_ID) {
+    if (window.KanbanShare) {
+      window.KanbanShare.init({
+        boardId: BOARD_ID,
+        owner: BOARD_OWNER,
+        getTitle: () => boardTitleInput.value.trim() || 'Доска'
+      });
+    }
     loadBoard();
   }
 
