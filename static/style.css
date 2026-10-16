@@ -1327,10 +1327,14 @@
     min-width: 0;
   }
 
+  /* «Открыть доступ» и «Скопировать» — одной ширины, поэтому поля
+     «Логин пользователя» и ссылки рядом с ними тоже одной ширины */
   .confirm-btn.share-add-btn {
     height: 44px;
     flex-shrink: 0;
-    padding: 0 16px;
+    width: 148px;
+    padding: 0 12px;
+    white-space: nowrap;
   }
 
   /* доступ по ссылке */
@@ -1366,9 +1370,13 @@
     color: var(--text2);
   }
 
+  /* «Создать ссылку» — того же размера, что «Открыть доступ» */
   .confirm-btn.share-link-create {
     flex-shrink: 0;
-    padding: 0 16px;
+    width: 148px;
+    height: 44px;
+    padding: 0 12px;
+    white-space: nowrap;
   }
 
   .share-link-url-row {
@@ -1475,7 +1483,22 @@
   }
 
   @media (max-width: 420px) {
-    .share-add-row:not(.share-link-url-row) {
+    .share-add-row {
       flex-direction: column;
+    }
+
+    .confirm-btn.share-add-btn,
+    .confirm-btn.share-link-create {
+      width: 100%;
+    }
+
+    .share-link-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    /* в столбик поле не растягиваем по высоте (flex: 1) — обычные 44px */
+    .share-add-row .confirm-input {
+      flex: none;
     }
   }

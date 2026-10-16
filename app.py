@@ -1176,6 +1176,10 @@ def shared_with_me() -> list:
         del summary["_created"]
         summary["owner"] = owner["id"]
         summary["ownerName"] = owner["name"]
+        # получатель ещё не открывал доску — отметка «Новая» на плитке;
+        # notify — показать её в уведомлении на стартовой странице
+        summary["isNew"] = not s["opened"]
+        summary["notify"] = not s["opened"] and not s["notified"]
         result.append(summary)
     return result
 
@@ -1323,6 +1327,9 @@ def get_board(board_id):
     else:
         data["access"] = access_info(board_id, owner_id)
         response = jsonify(data)
+    if owner_id and since is None:
+        # получатель открыл чужую доску — она больше не «новая»
+        shares.mark_opened(owner_id, board_id, current_user()["id"])
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -1472,6 +1479,16 @@ def add_board_access(board_id):
     events.write("board.share", uid=user["id"], name=user["name"], board=board_id,
                  to_uid=target["id"], to_name=target["name"], ip=ip)
     return jsonify(access_info(board_id, ""))
+
+
+@app.route("/api/shared/notified", methods=["POST"])
+def shared_notified():
+    """Получатель закрыл уведомление о новых досках на стартовой странице
+    (отметка «Новая» на плитках остаётся, пока доску не откроют)."""
+    user = current_user()
+    if user:
+        shares.mark_notified(user["id"])
+    return jsonify({"status": "ok"})
 
 
 @app.route("/api/board/<board_id>/access/<user_id>", methods=["DELETE"])

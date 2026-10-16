@@ -11,7 +11,11 @@ id доски уникален только внутри пространств�
 
 Хранение — Data/shares.txt, одна строка — один доступ:
 
-  SHARE owner=<id владельца> board=<id доски> user=<id получателя> at=2026-10-15T22:30:00
+  SHARE owner=<id владельца> board=<id доски> user=<id получателя> at=2026-10-15T22:30:00 [opened=1] [notified=1]
+
+opened=1 — получатель уже открывал доску (до этого на плитке отметка
+«Новая»), notified=1 — получатель закрыл уведомление о новой доске на
+стартовой странице.
 
 Ссылка-приглашение на доску (одна на доску; кто откроет её со своим
 аккаунтом, получает доступ):
@@ -34,7 +38,7 @@ import uuid
 from datetime import datetime
 
 UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
-LINE_RE = re.compile(rf"^SHARE\s+owner=({UUID})\s+board=({UUID})\s+user=({UUID})(?:\s+at=(\S+))?$")
+LINE_RE = re.compile(rf"^SHARE\s+owner=({UUID})\s+board=({UUID})\s+user=({UUID})(?:\s+at=(\S+))?((?:\s+\w+=\S*)*)$")
 LINK_RE = re.compile(rf"^LINK\s+owner=({UUID})\s+board=({UUID})\s+token=([A-Za-z0-9_-]{{16,64}})(?:\s+at=(\S+))?$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 
@@ -90,11 +94,14 @@ class ShareStore:
             if not m:
                 continue
             owner, board, user, at = m.group(1), m.group(2), m.group(3), m.group(4) or ""
+            flags = dict(f.split("=", 1) for f in (m.group(5) or "").split())
             key = (owner, board, user)
             if owner == user or key in seen:
                 continue
             seen.add(key)
-            items.append({"owner": owner, "board": board, "user": user, "at": at})
+            items.append({"owner": owner, "board": board, "user": user, "at": at,
+                          "opened": flags.get("opened") == "1",
+                          "notified": flags.get("notified") == "1"})
         self._items = items
         self._links = links
         self._mtime = mtime
@@ -107,7 +114,12 @@ class ShareStore:
             "",
         ]
         for s in self._items:
-            lines.append(f"SHARE owner={s['owner']} board={s['board']} user={s['user']} at={s['at']}")
+            line = f"SHARE owner={s['owner']} board={s['board']} user={s['user']} at={s['at']}"
+            if s.get("opened"):
+                line += " opened=1"
+            if s.get("notified"):
+                line += " notified=1"
+            lines.append(line)
         if self._links:
             lines.append("")
         for l in self._links:
@@ -136,10 +148,12 @@ class ShareStore:
                     if s["owner"] == owner and s["board"] == board]
 
     def boards_for(self, user: str) -> list:
-        """Доски, открытые пользователю: [{"owner", "board", "at"}] в порядке добавления."""
+        """Доски, открытые пользователю: [{"owner", "board", "at", "opened",
+        "notified"}] в порядке добавления."""
         with self._lock:
             self._ensure_loaded()
-            return [{"owner": s["owner"], "board": s["board"], "at": s["at"]}
+            return [{"owner": s["owner"], "board": s["board"], "at": s["at"],
+                     "opened": bool(s.get("opened")), "notified": bool(s.get("notified"))}
                     for s in self._items if s["user"] == user]
 
     def counts_for_owner(self, owner: str) -> dict:
@@ -171,9 +185,34 @@ class ShareStore:
             if self.has(owner, board, user):
                 return False
             self._items.append({"owner": owner, "board": board, "user": user,
-                                "at": datetime.now().isoformat(timespec="seconds")})
+                                "at": datetime.now().isoformat(timespec="seconds"),
+                                "opened": False, "notified": False})
             self._save()
             return True
+
+    def mark_opened(self, owner: str, board: str, user: str) -> None:
+        """Получатель открыл доску — она больше не «новая»."""
+        with self._lock:
+            self._ensure_loaded()
+            for s in self._items:
+                if (s["owner"], s["board"], s["user"]) == (owner, board, user) and not s.get("opened"):
+                    s["opened"] = True
+                    self._save()
+                    return
+
+    def mark_notified(self, user: str) -> int:
+        """Получатель закрыл уведомление о новых досках. Возвращает, у скольких
+        доступов отметка поставлена."""
+        with self._lock:
+            self._ensure_loaded()
+            changed = 0
+            for s in self._items:
+                if s["user"] == user and not s.get("opened") and not s.get("notified"):
+                    s["notified"] = True
+                    changed += 1
+            if changed:
+                self._save()
+            return changed
 
     def _remove_where(self, match) -> list:
         with self._lock:

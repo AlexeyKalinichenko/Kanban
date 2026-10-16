@@ -1,6 +1,7 @@
 // Стартовая страница: показывает все доски пользователя, позволяет создать
 // новую доску и удалить существующую. Ниже — раздел «Доступные мне»: чужие
-// доски, к которым пользователю открыли доступ.
+// доски, к которым пользователю открыли доступ (вкладки «Мои доски |
+// Доступные мне» и уведомление о новых досках).
 
 const boardsGrid = document.getElementById('boards-grid');
 
@@ -93,6 +94,7 @@ function createBoardTile(board, shared = false) {
   tile.className = 'board-tile';
   tile.href = shared ? `/board/${board.owner}/${board.id}` : `/board/${board.id}`;
   tile.dataset.id = board.id;
+  if (shared) tile.dataset.owner = board.owner;
   tile.draggable = !shared;
   // плитка окрашивается в цвет фона доски (если он задан)
   if (board.background) {
@@ -102,6 +104,8 @@ function createBoardTile(board, shared = false) {
   const title = document.createElement('div');
   title.className = 'board-tile-title';
   title.textContent = board.title;
+  // название длиннее двух строк обрезается — полное во всплывающей подсказке
+  title.title = board.title;
 
   // Низ плитки: общее число задач и полоска — по отрезку на столбец,
   // ширина отрезка пропорциональна числу задач в нём (пустые столбцы не видны).
@@ -146,6 +150,15 @@ function createBoardTile(board, shared = false) {
     badge.lastChild.textContent = board.sharedWith;
     badge.title = `Доступ открыт ${board.sharedWith} ${wordForPeople(board.sharedWith)}`;
     countRow.appendChild(badge);
+  }
+  // чужая доска (раздел «Доступные мне») — справа логин владельца
+  if (shared) {
+    const owner = document.createElement('span');
+    owner.className = 'board-tile-owner';
+    owner.innerHTML = ICONS.users + '<span></span>';
+    owner.lastChild.textContent = board.ownerName;
+    owner.title = `Доска пользователя ${board.ownerName}`;
+    countRow.appendChild(owner);
   }
   meta.appendChild(countRow);
   meta.appendChild(bar);
@@ -244,16 +257,15 @@ function createBoardTile(board, shared = false) {
   head.appendChild(deleteBtn);
 
   tile.appendChild(head);
-  if (shared) {
-    // чья это доска
-    const owner = document.createElement('div');
-    owner.className = 'board-tile-owner';
-    owner.innerHTML = ICONS.users + '<span></span>';
-    owner.lastChild.textContent = board.ownerName;
-    owner.title = `Доска пользователя ${board.ownerName}`;
-    tile.appendChild(owner);
-  }
   tile.appendChild(meta);
+  // чужая доска, которую ещё не открывали, — отметка «Новая»
+  if (shared && board.isNew) {
+    tile.classList.add('board-tile-new');
+    const badge = document.createElement('span');
+    badge.className = 'board-tile-new-badge';
+    badge.textContent = 'Новая';
+    tile.appendChild(badge);
+  }
   return tile;
 }
 
@@ -278,8 +290,144 @@ async function leaveSharedBoard(board, tile) {
 const sharedSection = document.getElementById('shared-section');
 const sharedGrid = document.getElementById('shared-grid');
 
+// --- Вкладки «Мои доски | Доступные мне» ---
+// Показываются, только если есть чужие доски, к которым вам открыли доступ.
+// Выбранная вкладка запоминается в браузере.
+const boardTabs = document.getElementById('board-tabs');
+const tabButtons = boardTabs.querySelectorAll('.board-tab');
+const sharedCount = document.getElementById('shared-count');
+const pageTitle = document.getElementById('page-title');
+const pageSubtitle = document.getElementById('page-subtitle');
+const TAB_KEY = 'kanban-start-tab';
+const TAB_TEXT = {
+  own: { title: 'Мои доски', subtitle: 'Выберите одну или создайте новую.' },
+  shared: { title: 'Доступные мне', subtitle: 'Доски, которые вам открыли другие пользователи.' }
+};
+
+function readSavedTab() {
+  try { return localStorage.getItem(TAB_KEY) === 'shared' ? 'shared' : 'own'; } catch (e) { return 'own'; }
+}
+
+let activeTab = readSavedTab();
+
+function hasSharedBoards() {
+  return !!sharedGrid.querySelector('.board-tile');
+}
+
+function setTab(tab, remember = true) {
+  if (tab === 'shared' && !hasSharedBoards()) tab = 'own';
+  activeTab = tab;
+  if (remember) {
+    try { localStorage.setItem(TAB_KEY, tab); } catch (e) { /* без запоминания */ }
+  }
+  tabButtons.forEach(btn => {
+    const on = btn.dataset.tab === tab;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    btn.tabIndex = on ? 0 : -1;
+  });
+  boardsGrid.hidden = tab !== 'own';
+  sharedSection.hidden = tab !== 'shared';
+  if (emptyHintEl) emptyHintEl.hidden = tab !== 'own';
+  pageTitle.textContent = TAB_TEXT[tab].title;
+  pageSubtitle.textContent = TAB_TEXT[tab].subtitle;
+  document.title = TAB_TEXT[tab].title;
+  renderSharedBanner();
+}
+
+tabButtons.forEach(btn => {
+  btn.addEventListener('click', () => setTab(btn.dataset.tab));
+  // стрелки влево/вправо — переход между вкладками
+  btn.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const next = btn.dataset.tab === 'own' ? 'shared' : 'own';
+    setTab(next);
+    boardTabs.querySelector(`[data-tab="${next}"]`).focus();
+  });
+});
+
+// Вкладки видны, только если есть чужие доски; на вкладке — их число,
+// точка — среди них есть новые (ещё не открытые)
 function refreshSharedSection() {
-  sharedSection.hidden = !sharedGrid.querySelector('.board-tile');
+  const tiles = sharedGrid.querySelectorAll('.board-tile');
+  boardTabs.hidden = tiles.length === 0;
+  sharedCount.textContent = tiles.length ? String(tiles.length) : '';
+  const tabShared = document.getElementById('tab-shared');
+  tabShared.classList.toggle('has-new', !!sharedGrid.querySelector('.board-tile-new'));
+  setTab(tiles.length ? activeTab : 'own', false);
+}
+
+// --- Уведомление о новых досках ---
+// Вам открыли доступ к доске, а вы её ещё не открывали и уведомление не
+// закрывали. Одна доска — «Открыть», несколько — «Посмотреть» (вкладка).
+const sharedBanner = document.getElementById('shared-banner');
+let bannerBoards = [];
+
+function phraseNewBoards(n) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  return mod10 === 1 && mod100 !== 11 ? `${n} новой доске` : `${n} новым доскам`;
+}
+
+function renderSharedBanner() {
+  // доски, которые убрали у себя, в уведомлении не нужны
+  bannerBoards = bannerBoards.filter(b =>
+    sharedGrid.querySelector(`.board-tile[data-owner="${b.owner}"][data-id="${b.id}"]`));
+  sharedBanner.hidden = bannerBoards.length === 0;
+  if (sharedBanner.hidden) return;
+  sharedBanner.innerHTML = '';
+
+  const icon = document.createElement('span');
+  icon.className = 'shared-banner-icon';
+  icon.innerHTML = ICONS.users;
+  const text = document.createElement('div');
+  text.className = 'shared-banner-text';
+  const title = document.createElement('div');
+  title.className = 'shared-banner-title';
+  const message = document.createElement('div');
+  message.className = 'shared-banner-message';
+  text.appendChild(title);
+  text.appendChild(message);
+
+  const action = document.createElement('a');
+  action.className = 'shared-banner-btn';
+  if (bannerBoards.length === 1) {
+    const b = bannerBoards[0];
+    title.textContent = `Вам открыли доступ к доске «${b.title}»`;
+    message.textContent = `Владелец — ${b.ownerName}. Доска — во вкладке «Доступные мне».`;
+    action.textContent = 'Открыть';
+    action.href = `/board/${b.owner}/${b.id}`;
+  } else {
+    title.textContent = `Вам открыли доступ к ${phraseNewBoards(bannerBoards.length)}`;
+    message.textContent = 'Они — во вкладке «Доступные мне», новые отмечены.';
+    action.textContent = 'Посмотреть';
+    action.href = '#';
+    action.addEventListener('click', (e) => {
+      e.preventDefault();
+      setTab('shared');
+    });
+    // уже на этой вкладке — кнопка не нужна
+    action.hidden = activeTab === 'shared';
+  }
+
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'shared-banner-close';
+  close.innerHTML = ICONS.close;
+  close.title = 'Закрыть уведомление';
+  close.setAttribute('aria-label', close.title);
+  close.addEventListener('click', () => {
+    bannerBoards = [];
+    sharedBanner.hidden = true;
+    // отметка «Новая» на плитках остаётся, пока доску не откроют
+    fetch('/api/shared/notified', { method: 'POST' }).catch(() => {});
+  });
+
+  sharedBanner.appendChild(icon);
+  sharedBanner.appendChild(text);
+  sharedBanner.appendChild(action);
+  sharedBanner.appendChild(close);
 }
 
 function closeTileMenus() {
@@ -322,6 +470,7 @@ function refreshEmptyHint() {
     emptyHintEl = document.createElement('div');
     emptyHintEl.className = 'empty-hint';
     emptyHintEl.textContent = 'Пока нет ни одной доски — создайте первую.';
+    emptyHintEl.hidden = activeTab !== 'own';
     boardsGrid.parentElement.insertBefore(emptyHintEl, boardsGrid);
   } else if (hasBoards && emptyHintEl) {
     emptyHintEl.remove();
@@ -345,6 +494,7 @@ async function loadBoards() {
     (data.shared || []).forEach(board => {
       sharedGrid.appendChild(createBoardTile(board, true));
     });
+    bannerBoards = (data.shared || []).filter(b => b.notify);
     refreshSharedSection();
   } catch (err) {
     console.error('Не удалось загрузить список досок:', err);

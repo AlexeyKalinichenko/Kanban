@@ -355,7 +355,8 @@
       copy.textContent = 'Скопировать';
       copy.addEventListener('click', async () => {
         const ok = await copyText(url, field);
-        copy.textContent = ok ? 'Скопировано' : 'Выделите и скопируйте';
+        // не вышло — ссылка выделена в поле, её можно скопировать вручную
+        copy.textContent = ok ? 'Скопировано' : 'Выделено';
         setTimeout(() => { copy.textContent = 'Скопировать'; }, 1800);
       });
       row.appendChild(field);
