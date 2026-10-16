@@ -131,11 +131,14 @@ class AccountStore:
     Сервер должен работать одним процессом (потоков — сколько угодно):
     у каждого процесса была бы своя копия аккаунтов в памяти."""
 
-    def __init__(self, data_dir: str, is_untouched_board=None):
+    def __init__(self, data_dir: str, is_untouched_board=None, has_shared_boards=None):
         """is_untouched_board(path, board_id) -> bool: доска — нетронутая копия
-        шаблонной (такие доски при чистке не считаются, как будто их нет)."""
+        шаблонной (такие доски при чистке не считаются, как будто их нет).
+        has_shared_boards(user_id) -> bool: у пользователя есть общие доски
+        (свои, открытые другим, или чужие) — такой аккаунт при чистке не пустой."""
         self.data_dir = data_dir
         self.is_untouched_board = is_untouched_board
+        self.has_shared_boards = has_shared_boards
         self.users_file = os.path.join(data_dir, "users.txt")
         self.users_dir = os.path.join(data_dir, "users")
         self._lock = threading.RLock()
@@ -311,6 +314,16 @@ class AccountStore:
         with self._lock:
             self._ensure_loaded()
             u = self._by_key.get(name_key(name))
+            return dict(u) if u else None
+
+    def find_by_lookalike(self, name: str):
+        """Аккаунт по логину, где похожие русские и латинские буквы не
+        различаются (например, «аlexey» с русской «а»). Силуэт логина
+        уникален, поэтому ответ однозначный. Нужен, когда логин вводят
+        чтобы найти другого пользователя (открыть ему доступ к доске)."""
+        with self._lock:
+            self._ensure_loaded()
+            u = self._by_key.get(name_key(name)) or self._by_skeleton.get(name_skeleton(name))
             return dict(u) if u else None
 
     def all_users(self) -> list:
@@ -507,7 +520,10 @@ class AccountStore:
 
     def _has_boards(self, user_id: str) -> bool:
         """Есть ли у пользователя свои доски. Нетронутые копии шаблонных досок
-        не считаются: аккаунт только с ними — то же, что пустой."""
+        не считаются: аккаунт только с ними — то же, что пустой. Общие доски
+        (свои, открытые другим, и чужие, открытые ему) — считаются."""
+        if self.has_shared_boards and self.has_shared_boards(user_id):
+            return True
         folder = self.user_dir(user_id)
         try:
             names = os.listdir(folder)

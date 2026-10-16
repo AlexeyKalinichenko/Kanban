@@ -133,7 +133,8 @@
     border: none;
     color: var(--text);
     font-family: inherit;
-    width: min(80%, 560px);
+    /* по краям — кнопка «назад» слева и две кнопки справа («Доступ», «Фон») */
+    width: min(calc(100% - 232px), 560px);
     padding: 4px 12px;
     border-radius: 8px;
   }
@@ -297,11 +298,12 @@
       margin-bottom: 16px;
     }
 
-    /* название доски — мельче и на всю ширину между кнопками «назад» и «фон»
-       (по 44px + отступ), чтобы длинные названия не обрезались */
+    /* название доски — мельче и на всю ширину между кнопкой «назад» и
+       кнопками «Доступ» и «Фон» (по центру, поэтому отступ с обеих сторон —
+       как у двух кнопок), чтобы длинные названия не обрезались */
     .board-title-input {
       font-size: 18px;
-      width: calc(100% - 104px);
+      width: calc(100% - 208px);
       padding: 4px 6px;
       /* если и с уменьшенным шрифтом (static/board.js) не влезло — многоточие */
       text-overflow: ellipsis;
@@ -1257,4 +1259,246 @@
   .card-edit-btn.active {
     background: var(--hover);
     color: var(--link);
+  }
+
+  /* ---------- Доступ к доске (static/share.js) ---------- */
+
+  /* кнопка — слева от кнопки фона; число — сколько пользователей имеют доступ */
+  .share-btn {
+    position: absolute;
+    right: 52px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 9999px;
+    border: 1px solid var(--secondary-border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+    padding: 0;
+    transition: background 0.18s ease;
+  }
+
+  .share-btn[hidden] { display: none; }
+
+  .share-btn:hover {
+    background: var(--hover);
+  }
+
+  .share-btn-count {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9999px;
+    background: var(--link);
+    color: #ffffff;
+    font-size: 11px;
+    line-height: 18px;
+    font-weight: 700;
+    text-align: center;
+  }
+
+  .share-btn-count[hidden] { display: none; }
+
+  .confirm-dialog.share-dialog {
+    width: min(440px, 100%);
+    /* длинный список участников — окно прокручивается, а не уходит за экран */
+    max-height: calc(100vh - 32px);
+    max-height: calc(100dvh - 32px);
+    overflow-y: auto;
+  }
+
+  .share-add-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+  }
+
+  .share-add-row .confirm-input {
+    margin-top: 0;
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* «Открыть доступ» и «Скопировать» — одной ширины, поэтому поля
+     «Логин пользователя» и ссылки рядом с ними тоже одной ширины */
+  .confirm-btn.share-add-btn {
+    height: 44px;
+    flex-shrink: 0;
+    width: 148px;
+    padding: 0 12px;
+    white-space: nowrap;
+  }
+
+  /* доступ по ссылке */
+  .share-link {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--panel-border);
+  }
+
+  .share-link-head {
+    font-size: 13px;
+    line-height: 1.4;
+    font-weight: 600;
+    color: var(--text2);
+  }
+
+  .share-link-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 8px;
+  }
+
+  .share-link-row .share-link-hint {
+    flex: 1;
+    margin-top: 0;
+  }
+
+  .share-link-hint {
+    margin-top: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text2);
+  }
+
+  /* «Создать ссылку» — того же размера, что «Открыть доступ» */
+  .confirm-btn.share-link-create {
+    flex-shrink: 0;
+    width: 148px;
+    height: 44px;
+    padding: 0 12px;
+    white-space: nowrap;
+  }
+
+  .share-link-url-row {
+    margin-top: 8px;
+  }
+
+  .share-link-url {
+    font-size: 13px;
+    color: var(--text2);
+    text-overflow: ellipsis;
+  }
+
+  .share-link-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    margin-top: 4px;
+  }
+
+  .share-link-action {
+    border: none;
+    background: none;
+    padding: 4px 0;
+    color: var(--link);
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.5;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .share-link-action:hover {
+    text-decoration: underline;
+  }
+
+  .share-list {
+    list-style: none;
+    margin: 16px 0 0;
+    padding: 0;
+    border-top: 1px solid var(--panel-border);
+  }
+
+  .share-person,
+  .share-empty {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 44px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--panel-border);
+    font-size: 15px;
+    line-height: 1.4;
+  }
+
+  .share-empty {
+    color: var(--text2);
+    font-size: 14px;
+  }
+
+  .share-person-name {
+    font-weight: 600;
+    color: var(--text);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .share-person-me {
+    color: var(--text2);
+  }
+
+  .share-person-role {
+    margin-left: auto;
+    color: var(--text2);
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+
+  .share-person-remove {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    margin-right: -6px;
+    border: none;
+    border-radius: 9999px;
+    background: transparent;
+    color: var(--icon);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: background 0.18s ease, color 0.18s ease;
+  }
+
+  .share-person-remove:hover {
+    background: var(--hover);
+    color: var(--danger);
+  }
+
+  .share-leave-btn {
+    margin-right: auto;
+  }
+
+  @media (max-width: 420px) {
+    .share-add-row {
+      flex-direction: column;
+    }
+
+    .confirm-btn.share-add-btn,
+    .confirm-btn.share-link-create {
+      width: 100%;
+    }
+
+    .share-link-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    /* в столбик поле не растягиваем по высоте (flex: 1) — обычные 44px */
+    .share-add-row .confirm-input {
+      flex: none;
+    }
   }

@@ -1,9 +1,10 @@
 # Kanban board data file
 # Формат: TITLE: <название доски>
 #         CREATED: <дата создания> (порядок досок на стартовой странице)
+#         REVISION: <номер версии> (растёт при каждом сохранении)
 #         BACKGROUND: <blue|green|purple|red|yellow> (необязательно, без строки — обычный фон)
 #         TAGDEFS ... TAGDEF key=<ключ> color=<цвет> label=<название> ... ENDTAGDEFS
-#         COLUMN: <название> ... CARD priority=<critical|medium|minor> [tags=<ключ1,ключ2,...>] текст ENDCARD ... ENDCOLUMN
+#         COLUMN id=<id>: <название> ... CARD id=<id> priority=<critical|medium|minor> [tags=<ключ1,ключ2,...>] текст ENDCARD ... ENDCOLUMN
 #         Доступные цвета: red, green, yellow, blue, gray, brown, purple, cyan, pink, lime
 TITLE: Пет-проект: трекер привычек
 BACKGROUND: purple
@@ -16,27 +17,27 @@ TAGDEF key=bug color=red label=баг
 TAGDEF key=idea color=yellow label=идея
 ENDTAGDEFS
 
-COLUMN: Идеи
-CARD priority=minor tags=idea
+COLUMN id=kcf12a756: Идеи
+CARD id=c8583c65d priority=minor tags=idea
 Тёмная тема
 ENDCARD
-CARD priority=minor tags=idea,front
+CARD id=c18871bc8 priority=minor tags=idea,front
 Виджет на главный экран телефона
 ENDCARD
-CARD priority=minor tags=idea
+CARD id=ced87f2c4 priority=minor tags=idea
 Делиться прогрессом с друзьями
 ENDCARD
 ENDCOLUMN
 
-COLUMN: К работе
-CARD priority=critical tags=bug,back
+COLUMN id=k93396ae5: К работе
+CARD id=cdeec7c21 priority=critical tags=bug,back
 Серия сбрасывается после полуночи
 **Шаги:**
 • отметить привычку в 23:59
 • открыть приложение в 00:01
 Ожидаемо: серия продолжается
 ENDCARD
-CARD priority=medium tags=design
+CARD id=c8651edc5 priority=medium tags=design
 Экран статистики
 ☐ макет недели
 ☐ макет месяца
@@ -44,8 +45,8 @@ CARD priority=medium tags=design
 ENDCARD
 ENDCOLUMN
 
-COLUMN: В работе
-CARD priority=medium tags=front,back
+COLUMN id=k3a11d03f: В работе
+CARD id=ca7fa07c9 priority=medium tags=front,back
 Напоминания
 ☑ API для расписания
 ☑ хранение в базе
@@ -53,16 +54,16 @@ CARD priority=medium tags=front,back
 	☐ iOS
 	☐ Android
 ENDCARD
-CARD priority=medium tags=front
+CARD id=cdb5d29b8 priority=medium tags=front
 Онбординг из трёх экранов
 ENDCARD
 ENDCOLUMN
 
-COLUMN: Готово
-CARD priority=medium tags=back
+COLUMN id=ka0752f26: Готово
+CARD id=cbf71fbfb priority=medium tags=back
 Регистрация и вход
 ENDCARD
-CARD priority=minor tags=design
+CARD id=cd7f95e58 priority=minor tags=design
 Логотип и иконка приложения
 ENDCARD
 ENDCOLUMN

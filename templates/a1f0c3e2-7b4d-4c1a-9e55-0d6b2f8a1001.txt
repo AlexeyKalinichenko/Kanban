@@ -1,9 +1,10 @@
 # Kanban board data file
 # Формат: TITLE: <название доски>
 #         CREATED: <дата создания> (порядок досок на стартовой странице)
+#         REVISION: <номер версии> (растёт при каждом сохранении)
 #         BACKGROUND: <blue|green|purple|red|yellow> (необязательно, без строки — обычный фон)
 #         TAGDEFS ... TAGDEF key=<ключ> color=<цвет> label=<название> ... ENDTAGDEFS
-#         COLUMN: <название> ... CARD priority=<critical|medium|minor> [tags=<ключ1,ключ2,...>] текст ENDCARD ... ENDCOLUMN
+#         COLUMN id=<id>: <название> ... CARD id=<id> priority=<critical|medium|minor> [tags=<ключ1,ключ2,...>] текст ENDCARD ... ENDCOLUMN
 #         Доступные цвета: red, green, yellow, blue, gray, brown, purple, cyan, pink, lime
 TITLE: Дом
 BACKGROUND: green
@@ -17,49 +18,49 @@ TAGDEF key=money color=lime label=деньги
 TAGDEF key=mark color=gray label=
 ENDTAGDEFS
 
-COLUMN: Надо сделать
-CARD priority=critical tags=urgent,money
+COLUMN id=k9c5e876b: Надо сделать
+CARD id=cea386d2e priority=critical tags=urgent,money
 Оплатить коммуналку
 до **25 числа**, иначе пени
 ENDCARD
-CARD priority=medium tags=buy
+CARD id=ccf0891eb priority=medium tags=buy
 Список покупок на неделю
 ☐ молоко, яйца, сыр
 ☐ овощи для супа
 ☐ корм для кота
 ☑ хлеб
 ENDCARD
-CARD priority=medium tags=repair
+CARD id=cba6c2b41 priority=medium tags=repair
 Починить кран на кухне
 • купить картридж
 	• модель смотреть на смесителе
 • перекрыть воду
 • заменить и проверить
 ENDCARD
-CARD priority=minor tags=family,mark
+CARD id=c1c5720f7 priority=minor tags=family,mark
 Позвонить бабушке в воскресенье
 ENDCARD
 ENDCOLUMN
 
-COLUMN: В процессе
-CARD priority=medium tags=repair,money
+COLUMN id=k68627699: В процессе
+CARD id=c29183072 priority=medium tags=repair,money
 Покраска балкона
 ☑ выбрать цвет
 ☑ купить краску и валик
 ☐ снять старую краску
 ☐ покрасить в **два слоя**
 ENDCARD
-CARD priority=minor tags=family
+CARD id=c372d9cec priority=minor tags=family
 Разобрать детские вещи
 что мало — отдать соседям
 ENDCARD
 ENDCOLUMN
 
-COLUMN: Готово
-CARD priority=medium tags=buy
+COLUMN id=ked87d5c7: Готово
+CARD id=cf61d749d priority=medium tags=buy
 Заказать новый пылесос
 ENDCARD
-CARD priority=minor
+CARD id=c0565a7db priority=minor
 Записаться к стоматологу
 ENDCARD
 ENDCOLUMN
