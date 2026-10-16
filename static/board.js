@@ -3,7 +3,11 @@
   // (к которой открыт доступ) — /board/<id владельца>/<guid>.
   // При загрузке страницы доска запрашивается через GET /api/board/<id>[?owner=<id владельца>].
   // Если файла нет или он пуст — доска отображается пустой (без столбцов).
-  // При любом изменении в UI доска целиком пересохраняется через POST по тому же адресу.
+  // При любом изменении в UI доска целиком пересохраняется через POST по тому же адресу
+  // (вместе с версией, от которой начата правка: если доску в это время
+  // изменил кто-то другой, сервер сливает изменения — см. merge.py).
+  // Открытая доска раз в несколько секунд проверяет, не изменилась ли она на
+  // сервере, и подтягивает чужие изменения, когда пользователь ничего не правит.
   const PATH_PARTS = window.location.pathname.split('/').filter(Boolean);
   const BOARD_OWNER = PATH_PARTS.length > 2 ? PATH_PARTS[1] : '';
   const BOARD_ID = PATH_PARTS[PATH_PARTS.length > 2 ? 2 : 1] || '';
@@ -13,6 +17,14 @@
   if (!BOARD_ID) {
     // на страницу доски попали без id — возвращаемся на стартовую страницу
     window.location.href = '/';
+  }
+
+  // Постоянный id столбца (k…) или карточки (c…) — хранится в файле доски
+  // и не меняется при переносе и правке: по нему сервер сливает изменения
+  function newItemId(prefix) {
+    const bytes = new Uint8Array(4);
+    (window.crypto || window.msCrypto).getRandomValues(bytes);
+    return prefix + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
   }
 
   let cardIdCounter = 1;
@@ -560,7 +572,7 @@
     });
   }
 
-  function createCardElement(text, priority, initialTags) {
+  function createCardElement(text, priority, initialTags, itemId) {
     priority = PRIORITIES[priority] ? priority : DEFAULT_PRIORITY;
     const info = PRIORITIES[priority];
 
@@ -569,6 +581,7 @@
     el.className = 'card ' + info.className;
     el.draggable = true;
     el.id = id;
+    el.dataset.itemId = itemId || newItemId('c');
     el.dataset.priority = priority;
 
     // Плашка приоритета — это и кнопка: по клику под ней открывается
@@ -1620,7 +1633,7 @@
     });
   }
 
-  function createColumn(title, cards) {
+  function createColumn(title, cards, itemId) {
     cards = cards || [];
     const columnId = 'col-' + (columnIdCounter++);
     const color = nextDotColor();
@@ -1628,6 +1641,7 @@
     const columnEl = document.createElement('div');
     columnEl.className = 'column';
     columnEl.dataset.columnId = columnId;
+    columnEl.dataset.itemId = itemId || newItemId('k');
 
     // header
     const header = document.createElement('div');
@@ -1775,7 +1789,7 @@
 
     attachColumnDragEvents(columnEl);
 
-    cards.forEach(c => cardsContainer.appendChild(createCardElement(c.text, c.priority, c.tags)));
+    cards.forEach(c => cardsContainer.appendChild(createCardElement(c.text, c.priority, c.tags, c.id)));
     updateColumnCount(columnEl);
 
     return columnEl;
@@ -1811,9 +1825,9 @@
         const text = getCardRawText(cardEl.cardTextEl || cardEl.querySelector('.card-text'));
         const priority = cardEl.dataset.priority || DEFAULT_PRIORITY;
         const tags = (cardEl.dataset.tags || '').split(',').filter(Boolean);
-        cards.push({ text, priority, tags });
+        cards.push({ id: cardEl.dataset.itemId, text, priority, tags });
       });
-      columns.push({ title, cards });
+      columns.push({ id: columnEl.dataset.itemId, title, cards });
     });
     const background = window.KanbanBoardBg ? window.KanbanBoardBg.get() : '';
     return { title: boardTitleInput.value, background, columns, tagDefs: tagRegistry };
@@ -1850,58 +1864,184 @@
     }
   }
 
-  function sendBoard() {
-    fetch(BOARD_API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(serializeBoard())
-    }).then(res => {
-      // доску удалили или владелец закрыл доступ — возвращаемся к списку досок
-      if (res.status === 404) window.location.href = '/';
-    }).catch(err => console.error('Не удалось сохранить доску:', err));
+  // --- Синхронизация с сервером ---
+  // serverBoard — последняя версия доски с сервера, которая показана на экране
+  // (от неё начинаются правки), serverRevision — её номер. Сохранения идут по
+  // одному: если во время сохранения доску снова изменили, после ответа
+  // сервера уйдёт ещё одно (с последним состоянием).
+  let serverBoard = null;
+  let serverRevision = 0;
+  let saving = false;
+  let saveAgain = false;
+  let saveFailed = false;   // сохранение не дошло (нет сети) — повторим
+  let localEpoch = 0;       // растёт при каждом изменении на этой странице
+
+  function goHome() {
+    // доску удалили или владелец закрыл доступ — возвращаемся к списку досок
+    window.location.href = '/';
   }
 
-  // --- Загрузка состояния доски с сервера при открытии страницы ---
+  async function sendBoard() {
+    localEpoch++;
+    if (saving) {
+      saveAgain = true;
+      return;
+    }
+    saving = true;
+    do {
+      saveAgain = false;
+      saveFailed = false;
+      const mine = serializeBoard();
+      try {
+        const res = await fetch(BOARD_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ board: mine, base: serverBoard, baseRevision: serverRevision })
+        });
+        if (res.status === 404) {
+          goHome();
+          return;
+        }
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.status);
+        if (!data.merged) {
+          // на сервере ровно то, что на экране
+          serverBoard = mine;
+          serverRevision = data.revision;
+        } else if (!saveAgain && !isBusy()) {
+          // сервер добавил к нашим изменениям чужие — показываем итог
+          applyBoard(data.board);
+        }
+        // иначе итог подтянет автообновление, когда пользователь закончит
+        // (следующее сохранение снова сольётся с версией на сервере)
+      } catch (err) {
+        console.error('Не удалось сохранить доску:', err);
+        saveFailed = true;
+      }
+    } while (saveAgain);
+    saving = false;
+  }
+
+  // Пользователь сейчас что-то делает на доске — чужие изменения не
+  // применяем, чтобы не сбить ему ввод, перетаскивание или открытое меню
+  function isBusy() {
+    if (draggedCardEl || draggedColumnEl) return true;
+    if (document.querySelector('.card-text-edit, .card-menu.open, .bg-picker-menu.open, .confirm-overlay')) return true;
+    const active = document.activeElement;
+    if (active && active !== document.body &&
+        (active.matches('input, textarea, [contenteditable="true"]'))) return true;
+    // недописанная новая карточка
+    for (const t of board.querySelectorAll('.add-input')) {
+      if (t.value.trim()) return true;
+    }
+    return false;
+  }
+
+  // --- Отрисовка доски с сервера (при открытии и при чужих изменениях) ---
   function renderColumns(columns) {
     columns.forEach(col => {
-      const columnEl = createColumn(col.title, col.cards || []);
+      const columnEl = createColumn(col.title, col.cards || [], col.id);
       board.insertBefore(columnEl, addColumnBtn);
     });
     recolorColumnDots();
+  }
+
+  function applyBoard(data) {
+    // прокрутка доски и столбцов остаётся на месте
+    const scrollLeft = board.scrollLeft;
+    const columnScroll = {};
+    board.querySelectorAll(':scope > .column').forEach(col => {
+      const cards = col.querySelector('.cards');
+      if (cards) columnScroll[col.dataset.itemId] = cards.scrollTop;
+      col.remove();
+    });
+
+    boardTitleInput.value = data.title || 'Доска';
+    fitBoardTitle();
+    // цвет фона доски (пустая строка — обычный фон)
+    if (window.KanbanBoardBg) {
+      window.KanbanBoardBg.apply(data.background || '');
+    }
+    // реестр тегов доски — важно установить ДО отрисовки карточек,
+    // чтобы бейджи тегов сразу отрисовались с правильными цветами/названиями
+    if (Array.isArray(data.tagDefs)) {
+      tagRegistry = data.tagDefs.map(t => ({ ...t }));
+    }
+    // пустая доска — без столбцов
+    renderColumns(data.columns || []);
+
+    board.scrollLeft = scrollLeft;
+    board.querySelectorAll(':scope > .column').forEach(col => {
+      const cards = col.querySelector('.cards');
+      if (cards && columnScroll[col.dataset.itemId]) cards.scrollTop = columnScroll[col.dataset.itemId];
+    });
+
+    // кто имеет доступ к доске — значок на кнопке «Доступ»
+    if (data.access && window.KanbanShare) window.KanbanShare.setAccess(data.access);
+
+    serverBoard = {
+      title: data.title,
+      background: data.background || '',
+      columns: data.columns || [],
+      tagDefs: data.tagDefs || []
+    };
+    serverRevision = data.revision || 0;
   }
 
   async function loadBoard() {
     try {
       const res = await fetch(BOARD_API_URL);
       if (res.status === 404) {
-        // доску удалили (например, в другой вкладке) — возвращаемся к списку
-        window.location.href = '/';
+        goHome();
         return;
       }
-      const data = await res.json();
-      if (data.title) {
-        boardTitleInput.value = data.title;
-      }
-      // кто имеет доступ к доске — значок на кнопке «Доступ»
-      if (window.KanbanShare) window.KanbanShare.setAccess(data.access);
-      fitBoardTitle();
-      // цвет фона доски (пустая строка — обычный фон)
-      if (window.KanbanBoardBg) {
-        window.KanbanBoardBg.apply(data.background || '');
-      }
-      // реестр тегов доски — важно установить ДО отрисовки карточек,
-      // чтобы бейджи тегов сразу отрисовались с правильными цветами/названиями
-      if (Array.isArray(data.tagDefs)) {
-        tagRegistry = data.tagDefs;
-      }
-      // если файла нет или он пуст — data.columns будет пустым массивом,
-      // и доска просто останется пустой (без столбцов)
-      if (data.columns && data.columns.length > 0) {
-        renderColumns(data.columns);
-      }
+      applyBoard(await res.json());
     } catch (err) {
       console.error('Не удалось загрузить доску с сервера:', err);
     }
+    startPolling();
+  }
+
+  // --- Автообновление: раз в POLL_MS проверяем, не изменилась ли доска ---
+  const POLL_MS = 3000;
+  let polling = false;
+
+  async function poll() {
+    if (polling || document.hidden || serverBoard === null) return;
+    if (saving) return;
+    if (saveFailed) {
+      sendBoard(); // прошлое сохранение не дошло — пробуем ещё раз
+      return;
+    }
+    polling = true;
+    const epoch = localEpoch;
+    try {
+      const sep = BOARD_API_URL.includes('?') ? '&' : '?';
+      const res = await fetch(`${BOARD_API_URL}${sep}since=${serverRevision}`);
+      if (res.status === 404) {
+        goHome();
+        return;
+      }
+      if (res.ok) {
+        const data = await res.json();
+        // пока шёл запрос, пользователь мог что-то изменить — тогда этот
+        // ответ уже устарел (его изменения подтянутся в следующий раз)
+        if (!data.unchanged && epoch === localEpoch && !saving && !isBusy()) {
+          applyBoard(data);
+        }
+      }
+    } catch (err) {
+      // нет сети — попробуем в следующий раз
+    }
+    polling = false;
+  }
+
+  function startPolling() {
+    setInterval(poll, POLL_MS);
+    // вернулись на вкладку — сразу проверяем
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) poll();
+    });
   }
 
   boardTitleInput.addEventListener('change', () => saveBoard());

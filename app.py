@@ -74,6 +74,7 @@ from flask import Flask, Response, abort, g, jsonify, redirect, request, session
 from accounts import AccountStore, NAME_RULES_TEXT, PASSWORD_MAX, PASSWORD_MIN, VISITS_UNKNOWN, name_key
 from events import EventLog, fingerprint, is_bot, local_iso, short_user_agent
 import stats
+from merge import merge_boards
 from shares import ShareStore
 
 # Напоминание «Задайте пароль, чтобы не потерять доступ» показывается
@@ -117,7 +118,8 @@ def is_untouched_template_board(path: str, board_id: str) -> bool:
             current = parse_board(f.read())
     except OSError:
         return False
-    original["created"] = current["created"] = ""
+    for key in ("created", "revision", "missingIds"):
+        original[key] = current[key] = ""
     return original == current
 
 
@@ -313,6 +315,7 @@ def write_board_order(ids: list) -> None:
 #   # Kanban board data file
 #   TITLE: Название доски
 #   CREATED: 2026-09-28T08:20:00
+#   REVISION: 12
 #   BACKGROUND: blue
 #
 #   TAGDEFS
@@ -320,21 +323,26 @@ def write_board_order(ids: list) -> None:
 #   TAGDEF key=tag-1a2b3c color=purple label=Моя метка
 #   ENDTAGDEFS
 #
-#   COLUMN: Название столбца
-#   CARD priority=medium tags=yellow,tag-1a2b3c
+#   COLUMN id=k3f9a01c2: Название столбца
+#   CARD id=c7d2e4b10 priority=medium tags=yellow,tag-1a2b3c
 #   Текст карточки.
 #   Может быть
 #   многострочным.
 #   ENDCARD
-#   CARD priority=critical
+#   CARD id=c0a1b2c3d priority=critical
 #   Другая карточка
 #   ENDCARD
 #   ENDCOLUMN
 #
-#   COLUMN: Следующий столбец
+#   COLUMN id=k5e6f7a8b: Следующий столбец
 #   ENDCOLUMN
 #
 # Строка BACKGROUND необязательна: если её нет — у доски обычный фон.
+# REVISION — номер версии доски: растёт при каждом сохранении; по нему
+# открытая доска узнаёт, что её изменил кто-то другой (общие доски).
+# id у столбцов и карточек — постоянные (не меняются при переносе и правке):
+# по ним сливаются одновременные изменения (merge.py). В старых файлах id нет —
+# они добавляются при первом открытии доски.
 # Строка CREATED — дата создания доски; по ней доски упорядочены на стартовой
 # странице (новые — в конце). У досок, созданных до её появления, строки нет.
 # Пустые строки и строки, начинающиеся с "#", вне блока CARD игнорируются.
@@ -387,6 +395,14 @@ DEFAULT_TAG_DEFS = [
 # без пробелов: буквы/цифры/подчёркивание/дефис.
 KEY_TOKEN_RE = re.compile(r"^[\w-]+$")
 
+# Постоянный id столбца или карточки (буквы, цифры, «-», «_»)
+ITEM_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+
+
+def new_item_id(prefix: str) -> str:
+    """Новый id: k… — столбец, c… — карточка (как в static/board.js)."""
+    return prefix + secrets.token_hex(4)
+
 
 def parse_board(text: str) -> dict:
     """Разбирает содержимое файла доски в структуру
@@ -394,11 +410,27 @@ def parse_board(text: str) -> dict:
     board_title = DEFAULT_BOARD_TITLE
     background = ""
     created = ""
+    revision = 0
     columns = []
     current_column = None
     card_lines = None
     card_priority = DEFAULT_PRIORITY
     card_tags = []
+    card_id = ""
+    # id столбцов и карточек: у кого id нет (старый файл) или он повторяется,
+    # получает новый; missing_ids — в файл стоит дописать id
+    seen_ids = set()
+    missing_ids = False
+
+    def take_id(raw_id: str, prefix: str) -> str:
+        nonlocal missing_ids
+        if not raw_id or not ITEM_ID_RE.match(raw_id) or raw_id in seen_ids:
+            missing_ids = True
+            raw_id = new_item_id(prefix)
+            while raw_id in seen_ids:
+                raw_id = new_item_id(prefix)
+        seen_ids.add(raw_id)
+        return raw_id
 
     # None означает "в файле нет явного блока TAGDEFS" — тогда в конце
     # подставляются DEFAULT_TAG_DEFS (совместимость со старыми файлами).
@@ -415,7 +447,7 @@ def parse_board(text: str) -> dict:
                 card_text = "\n".join(card_lines).strip("\n")
                 if current_column is not None:
                     current_column["cards"].append(
-                        {"text": card_text, "priority": card_priority, "tags": card_tags}
+                        {"id": card_id, "text": card_text, "priority": card_priority, "tags": card_tags}
                     )
                 card_lines = None
                 card_priority = DEFAULT_PRIORITY
@@ -447,11 +479,20 @@ def parse_board(text: str) -> dict:
             board_title = stripped[len("TITLE:"):].strip() or DEFAULT_BOARD_TITLE
         elif stripped.startswith("CREATED:"):
             created = normalize_created(stripped[len("CREATED:"):])
+        elif stripped.startswith("REVISION:"):
+            try:
+                revision = max(0, int(stripped[len("REVISION:"):].strip()))
+            except ValueError:
+                revision = 0
         elif stripped.startswith("BACKGROUND:"):
             background = normalize_background(stripped[len("BACKGROUND:"):])
-        elif stripped.startswith("COLUMN:"):
-            title = stripped[len("COLUMN:"):].strip()
-            current_column = {"title": title, "cards": []}
+        elif stripped.startswith("COLUMN"):
+            # COLUMN id=<id>: Название   (в старых файлах — COLUMN: Название)
+            match = re.match(r"COLUMN(?:\s+id=(\S*?))?:(.*)$", stripped)
+            if not match:
+                continue
+            title = match.group(2).strip()
+            current_column = {"id": take_id(match.group(1) or "", "k"), "title": title, "cards": []}
             columns.append(current_column)
         elif stripped == "ENDCOLUMN":
             current_column = None
@@ -461,6 +502,8 @@ def parse_board(text: str) -> dict:
             if priority not in PRIORITY_VALUES:
                 priority = DEFAULT_PRIORITY
             card_priority = priority
+            id_match = re.search(r"\bid=(\S+)", stripped)
+            card_id = take_id(id_match.group(1) if id_match else "", "c")
 
             # Новый формат: tags=key1,key2 (несколько тегов через запятую,
             # ключи ссылаются на записи в TAGDEFS). Старый формат (один
@@ -489,8 +532,10 @@ def parse_board(text: str) -> dict:
         "title": board_title,
         "background": background,
         "created": created,
+        "revision": revision,
         "columns": columns,
         "tagDefs": tag_defs,
+        "missingIds": missing_ids,
     }
 
 
@@ -500,6 +545,10 @@ def serialize_board(data: dict) -> str:
     board_title = str(data.get("title", "") or "").replace("\n", " ").strip() or DEFAULT_BOARD_TITLE
     background = normalize_background(data.get("background"))
     created = normalize_created(data.get("created"))
+    try:
+        revision = max(0, int(data.get("revision") or 0))
+    except (TypeError, ValueError):
+        revision = 0
 
     raw_defs = data.get("tagDefs")
     if raw_defs is None:
@@ -522,14 +571,17 @@ def serialize_board(data: dict) -> str:
         "# Kanban board data file",
         "# Формат: TITLE: <название доски>",
         "#         CREATED: <дата создания> (порядок досок на стартовой странице)",
+        "#         REVISION: <номер версии> (растёт при каждом сохранении)",
         "#         BACKGROUND: <blue|green|purple|red|yellow> (необязательно, без строки — обычный фон)",
         "#         TAGDEFS ... TAGDEF key=<ключ> color=<цвет> label=<название> ... ENDTAGDEFS",
-        "#         COLUMN: <название> ... CARD priority=<critical|medium|minor> [tags=<ключ1,ключ2,...>] текст ENDCARD ... ENDCOLUMN",
+        "#         COLUMN id=<id>: <название> ... CARD id=<id> priority=<critical|medium|minor> [tags=<ключ1,ключ2,...>] текст ENDCARD ... ENDCOLUMN",
         "#         Доступные цвета: red, green, yellow, blue, gray, brown, purple, cyan, pink, lime",
         f"TITLE: {board_title}",
     ]
     if created:
         lines.append(f"CREATED: {created}")
+    if revision:
+        lines.append(f"REVISION: {revision}")
     if background:
         lines.append(f"BACKGROUND: {background}")
     lines += [
@@ -541,9 +593,19 @@ def serialize_board(data: dict) -> str:
     lines.append("ENDTAGDEFS")
     lines.append("")
 
+    # id без повторов: неправильный или повторный id — новый
+    used_ids = set()
+
+    def clean_id(raw, prefix):
+        raw = str(raw or "")
+        if not ITEM_ID_RE.match(raw) or raw in used_ids:
+            raw = new_item_id(prefix)
+        used_ids.add(raw)
+        return raw
+
     for column in data.get("columns", []):
         title = str(column.get("title", "")).replace("\n", " ").strip()
-        lines.append(f"COLUMN: {title}")
+        lines.append(f"COLUMN id={clean_id(column.get('id'), 'k')}: {title}")
         for card in column.get("cards", []):
             priority = card.get("priority", DEFAULT_PRIORITY)
             if priority not in PRIORITY_VALUES:
@@ -562,7 +624,7 @@ def serialize_board(data: dict) -> str:
                     seen.add(t)
                     tags.append(t)
 
-            card_header = f"CARD priority={priority}"
+            card_header = f"CARD id={clean_id(card.get('id'), 'c')} priority={priority}"
             if tags:
                 card_header += f" tags={','.join(tags)}"
             lines.append(card_header)
@@ -831,6 +893,10 @@ def track_activity():
     """Любой запрос вошедшего пользователя (страница или API) — действие:
     продлевает текущий заход или начинает новый (см. accounts.register_activity)."""
     if request.path.startswith("/static/"):
+        return None
+    # автообновление открытой доски (GET …?since=) — не действие пользователя:
+    # иначе забытая открытая вкладка продлевала бы заход бесконечно
+    if request.method == "GET" and "since" in request.args:
         return None
     user = current_user()
     if user:
@@ -1215,21 +1281,60 @@ def save_boards_order():
 # API: содержимое одной доски
 # ---------------------------------------------------------------------------
 
+# Чтение-изменение-запись файла доски — под блокировкой этого файла: два
+# сохранения одной доски (общие доски) не должны перемешаться.
+_board_locks = {}
+_board_locks_guard = threading.Lock()
+
+
+def board_lock(path: str) -> threading.Lock:
+    with _board_locks_guard:
+        lock = _board_locks.get(path)
+        if lock is None:
+            lock = _board_locks[path] = threading.Lock()
+        return lock
+
+
+def read_board_file(path: str) -> dict:
+    """Читает доску; если в файле ещё нет id столбцов и карточек (старый файл) —
+    дописывает их, чтобы у всех, кто открыл доску, id совпадали. Под board_lock."""
+    with open(path, "r", encoding="utf-8") as f:
+        data = parse_board(f.read())
+    if data.pop("missingIds", False) and not path.startswith(TEMPLATES_DIR + os.sep):
+        write_text_atomic(path, serialize_board(data))
+    return data
+
+
 @app.route("/api/board/<board_id>", methods=["GET"])
 def get_board(board_id):
+    """Доска целиком. ?since=<версия> — для автообновления открытой доски:
+    если версия не изменилась, в ответе только {"unchanged": true, "revision"}."""
     if not is_valid_board_id(board_id):
         return jsonify({"error": "invalid id"}), 400
     path, owner_id = resolve_board(board_id, request_owner())
     if not path:
         # доска удалена или к ней нет доступа (в том числе доступ закрыли)
         return jsonify({"error": "not found"}), 404
-    with open(path, "r", encoding="utf-8") as f:
-        text = f.read()
-    data = parse_board(text)
-    data["access"] = access_info(board_id, owner_id)
-    response = jsonify(data)
+    with board_lock(path):
+        data = read_board_file(path)
+    since = request.args.get("since", type=int)
+    if since is not None and since == data["revision"]:
+        response = jsonify({"unchanged": True, "revision": since})
+    else:
+        data["access"] = access_info(board_id, owner_id)
+        response = jsonify(data)
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+def normalize_board(data) -> dict:
+    """Доска от браузера — в том виде, в каком её читает сервер (чистые
+    значения, id у всех столбцов и карточек)."""
+    if not isinstance(data, dict):
+        data = {}
+    clean = parse_board(serialize_board(data))
+    clean.pop("missingIds", None)
+    return clean
 
 
 @app.route("/api/board/<board_id>", methods=["POST"])
@@ -1245,30 +1350,47 @@ def save_board(board_id):
         if error_response:
             return error_response
     payload = request.get_json(force=True, silent=True) or {}
-    payload.pop("access", None)
+    # Браузер присылает доску целиком (board), версию, от которой начал правку
+    # (baseRevision), и саму эту версию (base). Если с тех пор доску сохранил
+    # кто-то другой, его изменения не затираются: три версии сливаются (merge.py).
+    mine = payload.get("board") if isinstance(payload.get("board"), dict) else payload
+    base = payload.get("base") if isinstance(payload.get("base"), dict) else None
+    base_revision = payload.get("baseRevision")
+    if mine is payload:
+        # старый формат запроса — доска без обёртки
+        for extra in ("access", "base", "baseRevision"):
+            mine.pop(extra, None)
     # своя доска или чужая, к которой открыт доступ (права у всех одни:
     # смотреть и править)
     path, _ = resolve_board(board_id, request_owner())
     if not path:
         return jsonify({"error": "not found"}), 404
-    # Дату создания хранит только сервер: браузер её не присылает,
-    # поэтому переносим её из текущего файла, чтобы она не терялась при сохранении.
-    with open(path, "r", encoding="utf-8") as f:
-        current = parse_board(f.read())
-    payload["created"] = current.get("created", "")
-    existing_labels = {t["key"]: t["label"] for t in current.get("tagDefs", [])}
-    # Лимит длины названия тега: новые и изменённые названия обрезаются,
-    # уже сохранённые (неизменённые) — остаются как есть.
-    tag_defs = payload.get("tagDefs")
-    if isinstance(tag_defs, list):
-        for t in tag_defs:
-            if not isinstance(t, dict):
-                continue
-            label = str(t.get("label", "") or "").strip()
-            if existing_labels.get(t.get("key")) != label:
-                t["label"] = label[:TAG_LABEL_MAX].strip()
-    write_text_atomic(path, serialize_board(payload))
-    return jsonify({"status": "ok"})
+    with board_lock(path):
+        current = read_board_file(path)
+        existing_labels = {t["key"]: t["label"] for t in current.get("tagDefs", [])}
+        # Лимит длины названия тега: новые и изменённые названия обрезаются,
+        # уже сохранённые (неизменённые) — остаются как есть.
+        tag_defs = mine.get("tagDefs")
+        if isinstance(tag_defs, list):
+            for t in tag_defs:
+                if not isinstance(t, dict):
+                    continue
+                label = str(t.get("label", "") or "").strip()
+                if existing_labels.get(t.get("key")) != label:
+                    t["label"] = label[:TAG_LABEL_MAX].strip()
+        mine = normalize_board(mine)
+        merged = base is not None and base_revision != current["revision"]
+        result = merge_boards(normalize_board(base), mine, current) if merged else mine
+        # дату создания и версию задаёт только сервер
+        result["created"] = current.get("created", "")
+        result["revision"] = current["revision"] + 1
+        write_text_atomic(path, serialize_board(result))
+    response = {"status": "ok", "revision": result["revision"]}
+    if merged:
+        # в доске есть и чужие изменения — браузеру нужна итоговая версия
+        response["merged"] = True
+        response["board"] = result
+    return jsonify(response)
 
 
 # ---------------------------------------------------------------------------
