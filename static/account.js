@@ -1,5 +1,6 @@
 // Аккаунт на стартовой странице: кнопка с логином, меню
-// аккаунта (сменить логин — один раз, задать/сменить пароль, выйти),
+// аккаунта (сменить логин — один раз, задать/сменить пароль, отключить
+// Telegram, выйти), кнопка «Telegram» (доски в Telegram-боте),
 // кнопка «Войти» (только у гостя) и напоминание
 // задать пароль, пока он не задан.
 (function () {
@@ -13,6 +14,7 @@
   const menu = document.getElementById('account-menu');
   const banner = document.getElementById('password-banner');
   const loginBtn = document.getElementById('login-btn');
+  const telegramBtn = document.getElementById('telegram-btn');
 
   let account = null;
 
@@ -37,6 +39,10 @@
     menu.innerHTML = '';
     if (account.canRename) addItem(account.guest ? 'Ваше имя' : 'Сменить логин', renameDialog);
     addItem(account.hasPassword ? 'Сменить пароль' : 'Задать пароль', passwordDialog);
+    if (account.telegram) {
+      const tgName = account.telegram.username ? ` (@${account.telegram.username})` : '';
+      addItem('Отключить Telegram' + tgName, unlinkTelegram);
+    }
     if (account.isAdmin) addItem('Статистика', () => { window.location.href = '/admin'; });
     // гостю выходить не из чего — аккаунта ещё нет
     if (!account.guest) addItem('Выйти', logout, true);
@@ -48,6 +54,11 @@
     // «Войти» — только у гостя; когда аккаунт создан, кнопка пропадает
     // (войти в другое пространство можно после «Выйти»)
     loginBtn.hidden = !account.guest;
+    // «Telegram» — если на сервере настроен бот
+    telegramBtn.hidden = !account.telegramBot;
+    telegramBtn.title = account.telegram
+      ? 'Telegram подключён' + (account.telegram.username ? ` (@${account.telegram.username})` : '') + ' — открыть бота'
+      : 'Смотреть доски в Telegram';
   }
 
   function addItem(label, action, danger) {
@@ -174,6 +185,73 @@
       }
     });
   }
+
+  // --- Telegram ---
+  // Ссылка t.me/<бот>?start=<одноразовый токен>: в Telegram пользователь жмёт
+  // «Запустить», и бот подключается к этому аккаунту. Ссылку открываем в новой
+  // вкладке; окно открывается сразу по нажатию (иначе браузер его заблокирует),
+  // адрес подставляется, когда сервер его выдал.
+  async function requestTelegramLink() {
+    const { ok, data } = await postJson('/api/telegram/link');
+    if (!ok || !data.url) throw new Error(data.error || 'Не удалось получить ссылку.');
+    return data.url;
+  }
+
+  async function openTelegram() {
+    if (!account) return;
+    if (account.guest) {
+      // гостю сначала нужно имя (создаётся аккаунт); после окна имени
+      // браузер уже не считает открытие вкладки ответом на нажатие —
+      // поэтому ссылку открываем из второго окна
+      await askNameIfGuest('telegram');
+      if (account.guest) return;
+      let url;
+      try {
+        url = await requestTelegramLink();
+      } catch (err) {
+        window.KanbanDialog.alert({ title: 'Telegram', message: err.message });
+        return;
+      }
+      const go = await window.KanbanDialog.confirm({
+        title: 'Доски в Telegram',
+        message: 'Откроется Telegram — нажмите там «Запустить», и бот покажет ваши доски. Ссылка действует 10 минут.',
+        confirmLabel: 'Открыть Telegram',
+        danger: false
+      });
+      if (go) window.open(url, '_blank', 'noopener');
+      return;
+    }
+    const win = window.open('', '_blank');
+    try {
+      const url = await requestTelegramLink();
+      if (win) win.location.href = url; else window.location.href = url;
+    } catch (err) {
+      if (win) win.close();
+      window.KanbanDialog.alert({ title: 'Telegram', message: err.message });
+    }
+  }
+
+  telegramBtn.addEventListener('click', openTelegram);
+
+  async function unlinkTelegram() {
+    const ok = await window.KanbanDialog.confirm({
+      title: 'Отключить Telegram?',
+      message: 'Бот перестанет показывать ваши доски. Подключить его снова можно кнопкой «Telegram».',
+      confirmLabel: 'Отключить'
+    });
+    if (!ok) return;
+    const { ok: done, data } = await postJson('/api/telegram/unlink');
+    if (done) {
+      account = data;
+      render();
+    }
+  }
+
+  // вернулись на вкладку (например, после подключения в Telegram) — обновляем
+  // меню аккаунта: там появится «Отключить Telegram»
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && account && !account.guest) loadAccount();
+  });
 
   // Пространство без пароля, но с досками: уйдя из него, вернуться будет нельзя
   function wouldLoseBoards() {

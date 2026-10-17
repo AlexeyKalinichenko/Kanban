@@ -33,6 +33,11 @@
   VISITSTART: 2026-10-05T08:20:00 (начало текущего захода; строки нет, если
                                    заход уже закрыт — записан visit.end)
   VISITSID: a1b2c3d4              (устройство, с которого начат текущий заход)
+  TGID: 123456789                 (Telegram-пользователь, подключённый к аккаунту
+                                   через бота; строк TG… нет, пока не подключён)
+  TGUSER: username                (@username в Telegram на момент подключения,
+                                   может отсутствовать)
+  TGAT: 2026-10-17T10:50:00       (когда подключён Telegram)
   ENDUSER
 """
 
@@ -181,7 +186,8 @@ class AccountStore:
                     current = {"id": m.group(1), "name": "", "password": "",
                                "renamed": False, "ver": 1, "created": "", "seen": "",
                                "visits": VISITS_UNKNOWN, "visit_at": "",
-                               "visit_start": "", "visit_sid": ""}
+                               "visit_start": "", "visit_sid": "",
+                               "tg_id": "", "tg_user": "", "tg_at": ""}
             elif line == "ENDUSER":
                 if current and current["name"]:
                     users.append(current)
@@ -216,6 +222,12 @@ class AccountStore:
                     current["visit_start"] = value
                 elif key == "VISITSID":
                     current["visit_sid"] = value
+                elif key == "TGID":
+                    current["tg_id"] = value if value.isdigit() else ""
+                elif key == "TGUSER":
+                    current["tg_user"] = value
+                elif key == "TGAT":
+                    current["tg_at"] = value
         return users
 
     def _reindex(self) -> None:
@@ -244,7 +256,7 @@ class AccountStore:
     def _serialize(self) -> str:
         lines = [
             "# Аккаунты канбан-доски. Пароли хранятся только в виде хэша.",
-            "# Формат: USER id=<id> / NAME: / PASSWORD: (если задан) / VER: / CREATED: / SEEN: / ENDUSER",
+            "# Формат: USER id=<id> / NAME: / PASSWORD: (если задан) / VER: / CREATED: / SEEN: / TGID: (если подключён Telegram) / ENDUSER",
             "",
         ]
         for u in self._users:
@@ -264,6 +276,12 @@ class AccountStore:
                 lines.append(f"VISITSTART: {u['visit_start']}")
                 if u.get("visit_sid"):
                     lines.append(f"VISITSID: {u['visit_sid']}")
+            if u.get("tg_id"):
+                lines.append(f"TGID: {u['tg_id']}")
+                if u.get("tg_user"):
+                    lines.append(f"TGUSER: {u['tg_user']}")
+                if u.get("tg_at"):
+                    lines.append(f"TGAT: {u['tg_at']}")
             lines.append("ENDUSER")
             lines.append("")
         return "\n".join(lines)
@@ -384,7 +402,8 @@ class AccountStore:
             user = {"id": str(uuid.uuid4()), "name": name, "password": "",
                     "renamed": renamed, "ver": 1, "created": now, "seen": now,
                     "visits": 1, "visit_at": now,
-                    "visit_start": now, "visit_sid": sid}
+                    "visit_start": now, "visit_sid": sid,
+                    "tg_id": "", "tg_user": "", "tg_at": ""}
             self._users.append(user)
             self._index(user)
             self._changed(urgent=True)
@@ -515,6 +534,68 @@ class AccountStore:
         return closed
 
     # ------------------------------------------------------------------
+    # Telegram (бот для просмотра досок, см. bot.py)
+    # ------------------------------------------------------------------
+
+    def find_by_telegram(self, tg_id: str):
+        """Аккаунт, к которому подключён Telegram-пользователь tg_id, или None.
+        Полный просмотр — аккаунтов немного."""
+        tg_id = str(tg_id or "")
+        if not tg_id:
+            return None
+        with self._lock:
+            self._ensure_loaded()
+            for u in self._users:
+                if u.get("tg_id") == tg_id:
+                    return dict(u)
+            return None
+
+    def link_telegram(self, user_id: str, tg_id: str, tg_user: str = ""):
+        """Подключает Telegram-пользователя к аккаунту (один к одному).
+        Прежние привязки снимаются: Telegram этого аккаунта (если подключали
+        другой) и аккаунт, к которому был подключён этот Telegram.
+        Возвращает None (аккаунта нет) или
+        {"user": аккаунт, "unlinked": [{"uid", "name", "tg_id"}, …],
+         "replaced_tg_id": прежний Telegram этого аккаунта или "",
+         "switched_from": логин аккаунта, с которого перешёл этот Telegram, или ""}."""
+        tg_id = str(tg_id)
+        tg_user = re.sub(r"[^A-Za-z0-9_]", "", str(tg_user or ""))[:32]
+        with self._lock:
+            self._ensure_loaded()
+            user = self._by_id.get(user_id)
+            if not user:
+                return None
+            unlinked = []
+            switched_from = ""
+            for u in self._users:
+                if u is not user and u.get("tg_id") == tg_id:
+                    unlinked.append({"uid": u["id"], "name": u["name"], "tg_id": tg_id})
+                    switched_from = u["name"]
+                    u["tg_id"] = u["tg_user"] = u["tg_at"] = ""
+            replaced = user.get("tg_id") or ""
+            if replaced == tg_id:
+                replaced = ""
+            if replaced:
+                unlinked.append({"uid": user["id"], "name": user["name"], "tg_id": replaced})
+            user["tg_id"], user["tg_user"], user["tg_at"] = tg_id, tg_user, _now()
+            self._changed(urgent=True)
+            return {"user": dict(user), "unlinked": unlinked,
+                    "replaced_tg_id": replaced, "switched_from": switched_from}
+
+    def unlink_telegram(self, user_id: str) -> str:
+        """Отключает Telegram от аккаунта. Возвращает id отключённого
+        Telegram-пользователя или "" (не был подключён)."""
+        with self._lock:
+            self._ensure_loaded()
+            user = self._by_id.get(user_id)
+            if not user or not user.get("tg_id"):
+                return ""
+            old = user["tg_id"]
+            user["tg_id"] = user["tg_user"] = user["tg_at"] = ""
+            self._changed(urgent=True)
+            return old
+
+    # ------------------------------------------------------------------
     # Чистка пустых аккаунтов
     # ------------------------------------------------------------------
 
@@ -549,7 +630,7 @@ class AccountStore:
         """Удаляет аккаунты без пароля и без своих досок (нетронутые шаблонные
         доски не в счёт), в которые не заходили больше CLEANUP_AFTER_DAYS дней.
         Папки досок проверяются без блокировки — остальные запросы в это время
-        не ждут. Возвращает удалённые аккаунты: [{"id", "name", "age_days"}]."""
+        не ждут. Возвращает удалённые аккаунты: [{"id", "name", "age_days", "tg_id"}]."""
         limit = datetime.now() - timedelta(days=CLEANUP_AFTER_DAYS)
         with self._lock:
             self._ensure_loaded()
@@ -566,7 +647,8 @@ class AccountStore:
                 if u["id"] in empty and self._is_stale(u, limit):
                     seen = _parse_time(u.get("seen", "")) or _parse_time(u.get("created", ""))
                     removed_users.append({"id": u["id"], "name": u["name"],
-                                          "age_days": (now - seen).days if seen else None})
+                                          "age_days": (now - seen).days if seen else None,
+                                          "tg_id": u.get("tg_id", "")})
             removed = {u["id"] for u in removed_users}
             if not removed:
                 return []

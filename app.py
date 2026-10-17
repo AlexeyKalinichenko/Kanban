@@ -33,6 +33,14 @@ API аккаунта:
 - POST   /api/login              — войти по логину и паролю
 - POST   /api/logout             — выйти
 - GET    /api/admin/stats?days=  — цифры для /admin (7, 30 или 90 дней)
+- POST   /api/telegram/link      — ссылка t.me/<бот>?start=<токен> для подключения Telegram
+- POST   /api/telegram/unlink    — отключить Telegram от аккаунта
+
+API для Telegram-бота (bot.py; заголовок X-Bot-Secret, только с 127.0.0.1):
+- POST   /api/bot/link           — подключить Telegram по токену из ссылки
+- GET    /api/bot/boards?tg_id=  — доски пользователя (свои и доступные ему)
+- GET    /api/bot/board?tg_id=&board=&owner= — содержимое доски
+- POST   /api/bot/unlink         — отключить Telegram (команда /logout в боте)
 
 API досок (свои доски и чужие, к которым открыт доступ):
 - GET    /api/boards            — список всех досок (id + название)
@@ -61,6 +69,8 @@ API доступа к доске (общие доски, см. shares.py):
 а не в базе данных — по условию задачи.
 """
 
+import hashlib
+import hmac
 import os
 import re
 import secrets
@@ -283,13 +293,13 @@ def request_owner() -> str:
 # Порядок досок на стартовой странице (меняется перетаскиванием плиток).
 # Хранится отдельным файлом в папке пользователя: по одному id доски на строку,
 # сверху вниз = слева направо. Имя файла — не GUID, в список досок он не попадает.
-def order_file_path() -> str:
-    return os.path.join(user_boards_dir(), "boards-order.txt")
+def order_file_path(folder: str = "") -> str:
+    return os.path.join(folder or user_boards_dir(), "boards-order.txt")
 
 
-def read_board_order() -> list:
+def read_board_order(folder: str = "") -> list:
     try:
-        with open(order_file_path(), "r", encoding="utf-8") as f:
+        with open(order_file_path(folder), "r", encoding="utf-8") as f:
             lines = f.read().splitlines()
     except OSError:
         return []
@@ -775,7 +785,8 @@ CREATE_TRIGGERS = {
     "set_board_link": "board_share",
     "join_invite": "invite",
 }
-GUEST_ACTIONS = set(CREATE_TRIGGERS.values())
+# telegram — гость нажал «Telegram» на стартовой странице (окно имени перед подключением)
+GUEST_ACTIONS = set(CREATE_TRIGGERS.values()) | {"telegram"}
 
 
 def guest_action(payload: dict) -> str:
@@ -846,6 +857,9 @@ def _housekeeping(do_cleanup: bool) -> None:
             for u in accounts.cleanup():
                 events.write("account.delete", uid=u["id"], name=u["name"],
                              reason="cleanup", age_days=u["age_days"])
+                if u.get("tg_id"):
+                    events.write("tg.unlink", uid=u["id"], name=u["name"], tgid=u["tg_id"],
+                                 reason="account_deleted")
                 # у удалённого аккаунта общих досок нет (иначе его бы не
                 # удалили), но на всякий случай убираем его доступы
                 shares.remove_user(u["id"])
@@ -882,6 +896,9 @@ PUBLIC_API = {"/api/login"}
 
 @app.before_request
 def require_login_for_api():
+    # API бота защищено своим секретом (см. bot_api)
+    if request.path.startswith("/api/bot/"):
+        return None
     if request.path.startswith("/api/") and request.path not in PUBLIC_API:
         if not current_user() and not session.get("guest"):
             return jsonify({"error": "auth"}), 401
@@ -892,7 +909,7 @@ def require_login_for_api():
 def track_activity():
     """Любой запрос вошедшего пользователя (страница или API) — действие:
     продлевает текущий заход или начинает новый (см. accounts.register_activity)."""
-    if request.path.startswith("/static/"):
+    if request.path.startswith("/static/") or request.path == "/favicon.ico":
         return None
     # автообновление открытой доски (GET …?since=) — не действие пользователя:
     # иначе забытая открытая вкладка продлевала бы заход бесконечно
@@ -936,6 +953,13 @@ def board_page(board_id, owner_id=""):
     if not path:
         return redirect("/")
     return render_page("board.html")
+
+
+@app.route("/favicon.ico")
+def favicon():
+    """Значок сайта: браузеры запрашивают /favicon.ico сами (например, для
+    картинок и файлов, у которых нет своей страницы со ссылкой на значок)."""
+    return app.send_static_file("icons/favicon.ico")
 
 
 @app.route("/login")
@@ -1010,6 +1034,10 @@ def account_json(user: dict):
         "passwordBannerFrom": PASSWORD_BANNER_FROM_VISIT,
         # пункт «Статистика» в меню аккаунта
         "isAdmin": is_admin(user),
+        # кнопка «Telegram» на стартовой странице (если бот настроен)
+        "telegramBot": TELEGRAM_BOT_USERNAME or None,
+        # подключённый Telegram: пункт «Отключить Telegram» в меню аккаунта
+        "telegram": {"username": user.get("tg_user") or ""} if user.get("tg_id") else None,
     })
 
 
@@ -1029,6 +1057,8 @@ def get_account():
             "canRename": True,
             "nameRules": NAME_RULES_TEXT,
             "passwordMin": PASSWORD_MIN,
+            "telegramBot": TELEGRAM_BOT_USERNAME or None,
+            "telegram": None,
         })
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -1086,6 +1116,8 @@ def change_password():
         return json_error(f"Пароль должен быть не короче {PASSWORD_MIN} символов.")
     if len(new) > PASSWORD_MAX:
         return json_error(f"Пароль должен быть не длиннее {PASSWORD_MAX} символов.")
+    # смена пароля (не первый пароль) отключает и Telegram — как остальные устройства
+    changing = bool(user and user.get("password"))
     if not user:
         # гость: пароль подходит — создаём аккаунт
         user, error_response = ensure_user()
@@ -1094,6 +1126,11 @@ def change_password():
     # версия сессий растёт — все остальные устройства выходят из аккаунта,
     # а это устройство получает новую cookie и остаётся в аккаунте
     new_ver = accounts.set_password(user["id"], new)
+    if changing:
+        old_tg = accounts.unlink_telegram(user["id"])
+        if old_tg:
+            events.write("tg.unlink", uid=user["id"], name=user["name"], tgid=old_tg,
+                         reason="password_changed")
     updated = accounts.get(user["id"])
     updated["ver"] = new_ver
     start_session(updated, "password", session.get("sid", ""))
@@ -1158,10 +1195,10 @@ def board_summary(board_id: str, path: str):
     }
 
 
-def shared_with_me() -> list:
-    """Чужие доски, открытые текущему пользователю (раздел «Доступные мне»),
-    в порядке, в котором открывали доступ."""
-    user = current_user()
+def shared_with_me(user=None) -> list:
+    """Чужие доски, открытые пользователю (по умолчанию — текущему; раздел
+    «Доступные мне»), в порядке, в котором открывали доступ."""
+    user = user or current_user()
     if not user:
         return []
     result = []
@@ -1184,11 +1221,8 @@ def shared_with_me() -> list:
     return result
 
 
-@app.route("/api/boards", methods=["GET"])
-def list_boards():
-    folder = user_boards_dir()  # у гостя — шаблонные доски
-    user = current_user()
-    share_counts = shares.counts_for_owner(user["id"]) if user else {}
+def own_boards(folder: str, share_counts: dict) -> list:
+    """Доски из папки пространства в порядке стартовой страницы."""
     boards = []
     for filename in os.listdir(folder):
         if not filename.endswith(".txt"):
@@ -1211,9 +1245,18 @@ def list_boards():
     # Если порядок уже задан перетаскиванием — доски из файла порядка идут
     # первыми в сохранённом порядке, остальные (например, только что
     # созданные) — после них, в порядке по умолчанию.
-    order = {board_id: i for i, board_id in enumerate(read_board_order())}
+    order = {board_id: i for i, board_id in enumerate(read_board_order(folder))}
     if order:
         boards.sort(key=lambda b: (0, order[b["id"]]) if b["id"] in order else (1, 0))
+    return boards
+
+
+@app.route("/api/boards", methods=["GET"])
+def list_boards():
+    folder = user_boards_dir()  # у гостя — шаблонные доски
+    user = current_user()
+    share_counts = shares.counts_for_owner(user["id"]) if user else {}
+    boards = own_boards(folder, share_counts)
     response = jsonify({"boards": boards, "shared": shared_with_me()})
     # список досок всегда должен быть свежим (не из кэша браузера)
     response.headers["Cache-Control"] = "no-store"
@@ -1626,6 +1669,234 @@ def join_invite(token):
     if not url:
         return json_error("Ссылка больше не действует. Попросите владельца доски прислать новую.", 404)
     return jsonify({"url": url})
+
+
+# ---------------------------------------------------------------------------
+# Telegram-бот (bot.py): просмотр досок в личном чате с ботом
+# ---------------------------------------------------------------------------
+#
+# Подключение: кнопка «Telegram» на стартовой странице → POST /api/telegram/link
+# → ссылка t.me/<бот>?start=<токен> → пользователь жмёт «Запустить» → бот
+# отправляет токен в POST /api/bot/link → Telegram подключён к аккаунту.
+# Один аккаунт ↔ один Telegram (новая привязка заменяет прежнюю). Привязка
+# хранится в users.txt (TGID, TGUSER, TGAT); снимается командой /logout в боте,
+# пунктом «Отключить Telegram» в меню аккаунта, сменой пароля и удалением
+# аккаунта. Бот только смотрит доски; всё — через API ниже, файлы досок он
+# не трогает.
+
+# Имя бота (без @) — для ссылки t.me/<имя>. Не задано — кнопки «Telegram» нет.
+TELEGRAM_BOT_USERNAME = os.environ.get("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@")
+# Общий секрет приложения и бота. Не задан — API бота выключено.
+BOT_SECRET = os.environ.get("KANBAN_BOT_SECRET", "").strip()
+
+# Токен ссылки: одноразовый, живёт TG_TOKEN_TTL секунд, хранится только хэш.
+# В памяти процесса: при перезапуске сервера выданные ссылки перестают работать.
+TG_TOKEN_TTL = 10 * 60
+TG_LINK_LIMIT, TG_LINK_WINDOW = 10, 60      # ссылок на аккаунт в минуту
+_tg_tokens = {}                             # sha256(токен) -> (id аккаунта, истекает)
+_tg_tokens_lock = threading.Lock()
+
+TG_ID_RE = re.compile(r"^\d{1,20}$")
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def issue_telegram_token(user_id: str) -> str:
+    token = secrets.token_urlsafe(24)  # 32 символа A-Za-z0-9_- (лимит start= — 64)
+    now = time.time()
+    with _tg_tokens_lock:
+        for key in [k for k, (_, exp) in _tg_tokens.items() if exp <= now]:
+            del _tg_tokens[key]
+        _tg_tokens[_token_hash(token)] = (user_id, now + TG_TOKEN_TTL)
+    return token
+
+
+def take_telegram_token(token: str):
+    """id аккаунта по токену или None. Токен одноразовый: удаляется сразу."""
+    if not token or len(token) > 64:
+        return None
+    with _tg_tokens_lock:
+        item = _tg_tokens.pop(_token_hash(token), None)
+    if not item or item[1] <= time.time():
+        return None
+    return item[0]
+
+
+@app.route("/api/telegram/link", methods=["POST"])
+def telegram_link():
+    """Ссылка на бота с одноразовым токеном. Гостю — 401: страница сначала
+    спрашивает имя (создаётся аккаунт), потом просит ссылку снова."""
+    if not TELEGRAM_BOT_USERNAME:
+        return json_error("Telegram-бот не настроен.", 404)
+    user = current_user()
+    if not user:
+        return jsonify({"error": "auth"}), 401
+    if is_limited("tg_link", user["id"], TG_LINK_LIMIT, TG_LINK_WINDOW):
+        return json_error("Слишком много попыток. Попробуйте через минуту.", 429)
+    add_hit("tg_link", user["id"])
+    token = issue_telegram_token(user["id"])
+    response = jsonify({"url": f"https://t.me/{TELEGRAM_BOT_USERNAME}?start={token}"})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/api/telegram/unlink", methods=["POST"])
+def telegram_unlink():
+    user = current_user()
+    if not user:
+        return jsonify({"error": "auth"}), 401
+    old = accounts.unlink_telegram(user["id"])
+    if old:
+        events.write("tg.unlink", uid=user["id"], name=user["name"], tgid=old, reason="web")
+    return account_json(accounts.get(user["id"]))
+
+
+# --- API для бота ---
+
+def bot_api(view):
+    """Только для bot.py: верный X-Bot-Secret и запрос с этого же компьютера.
+    Иначе — «страницы нет» (не выдаём, что такой адрес существует)."""
+    from functools import wraps
+
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        secret = request.headers.get("X-Bot-Secret", "")
+        if (not BOT_SECRET or not hmac.compare_digest(secret.encode(), BOT_SECRET.encode())
+                or request.remote_addr not in ("127.0.0.1", "::1")):
+            abort(404)
+        response = view(*args, **kwargs)
+        if isinstance(response, Response):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+    return wrapped
+
+
+def bot_user():
+    """Аккаунт по ?tg_id= (или полю tg_id в JSON) или None."""
+    payload = request.get_json(silent=True) or {}
+    tg_id = str(request.args.get("tg_id") or payload.get("tg_id") or "")
+    if not TG_ID_RE.match(tg_id):
+        return None
+    return accounts.find_by_telegram(tg_id)
+
+
+def compact_id(board_id: str) -> str:
+    """id доски без дефисов (32 символа) — бот кладёт его в кнопки (лимит 64 байта)."""
+    return board_id.replace("-", "")
+
+
+def full_board_id(value: str) -> str:
+    value = str(value or "").strip().lower()
+    if re.fullmatch(r"[0-9a-f]{32}", value):
+        value = f"{value[:8]}-{value[8:12]}-{value[12:16]}-{value[16:20]}-{value[20:]}"
+    return value
+
+
+@app.route("/api/bot/link", methods=["POST"])
+@bot_api
+def bot_link():
+    payload = request.get_json(silent=True) or {}
+    tg_id = str(payload.get("tg_id") or "")
+    if not TG_ID_RE.match(tg_id):
+        return json_error("bad tg_id")
+    uid = take_telegram_token(str(payload.get("token") or ""))
+    result = accounts.link_telegram(uid, tg_id, payload.get("tg_username") or "") if uid else None
+    if not result:
+        return jsonify({"error": "bad_token"})
+    user = result["user"]
+    for u in result["unlinked"]:
+        events.write("tg.unlink", uid=u["uid"], name=u["name"], tgid=u["tg_id"], reason="relinked")
+    events.write("tg.link", uid=user["id"], name=user["name"], tgid=tg_id,
+                 replaced=1 if result["replaced_tg_id"] else 0)
+    return jsonify({"uid": user["id"], "name": user["name"],
+                    "replaced_tg_id": result["replaced_tg_id"] or None,
+                    "switched_from": result["switched_from"] or None})
+
+
+@app.route("/api/bot/unlink", methods=["POST"])
+@bot_api
+def bot_unlink():
+    user = bot_user()
+    if user:
+        old = accounts.unlink_telegram(user["id"])
+        if old:
+            events.write("tg.unlink", uid=user["id"], name=user["name"], tgid=old,
+                         reason="bot_logout")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/bot/boards", methods=["GET"])
+@bot_api
+def bot_boards():
+    """Доски пользователя: свои (в порядке стартовой страницы), затем
+    доступные ему чужие. owner — первые 8 символов id владельца ("" — своя)."""
+    user = bot_user()
+    if not user:
+        return jsonify({"error": "not_linked"})
+    folder = accounts.user_dir(user["id"])
+    boards = []
+    if os.path.isdir(folder):
+        boards = [{"id": compact_id(b["id"]), "owner": "", "title": b["title"]}
+                  for b in own_boards(folder, {})]
+    for b in shared_with_me(user):
+        boards.append({"id": compact_id(b["id"]), "owner": b["owner"][:8],
+                       "ownerName": b["ownerName"], "title": b["title"]})
+    return jsonify({"name": user["name"], "boards": boards})
+
+
+def bot_board_path(user: dict, board_id: str, owner: str):
+    """Файл доски, которую пользователь может смотреть: своя (owner пустой)
+    или чужая, к которой ему открыт доступ (owner — начало id владельца).
+    Возвращает (путь, полный id владельца или "") или (None, None)."""
+    if not is_valid_board_id(board_id):
+        return None, None
+    if not owner or owner == "-":
+        path = os.path.join(accounts.user_dir(user["id"]), f"{board_id}.txt")
+        return (path, "") if os.path.exists(path) else (None, None)
+    owner = owner.lower()
+    for s in shares.boards_for(user["id"]):
+        if s["board"] == board_id and s["owner"].lower().startswith(owner):
+            path = os.path.join(accounts.user_dir(s["owner"]), f"{board_id}.txt")
+            return (path, s["owner"]) if os.path.exists(path) else (None, None)
+    return None, None
+
+
+@app.route("/api/bot/board", methods=["GET"])
+@bot_api
+def bot_board():
+    """Доска для показа в Telegram: столбцы, карточки (текст, приоритет,
+    метки с названием и цветом). ?view=1 — доску открыли из списка (журнал)."""
+    user = bot_user()
+    if not user:
+        return jsonify({"error": "not_linked"})
+    board_id = full_board_id(request.args.get("board"))
+    path, owner_id = bot_board_path(user, board_id, str(request.args.get("owner") or ""))
+    if not path:
+        return jsonify({"error": "not_found"})
+    with board_lock(path):
+        data = read_board_file(path)
+    tags = {t["key"]: {"name": t["label"], "color": t["color"]} for t in data.get("tagDefs", [])}
+    result = {
+        "title": data["title"],
+        "revision": data["revision"],
+        "columns": [{
+            "title": c["title"],
+            "cards": [{"text": card["text"], "priority": card["priority"],
+                       "tags": [tags[k] for k in card.get("tags", []) if k in tags]}
+                      for card in c["cards"]],
+        } for c in data["columns"]],
+    }
+    if owner_id:
+        owner = accounts.get(owner_id)
+        result["ownerName"] = owner["name"] if owner else ""
+    if request.args.get("view") == "1":
+        events.write("tg.view", uid=user["id"], name=user["name"], tgid=user["tg_id"])
+        if owner_id:
+            # открыл чужую доску — она больше не «новая»
+            shares.mark_opened(owner_id, board_id, user["id"])
+    return jsonify(result)
 
 
 if __name__ == "__main__":
