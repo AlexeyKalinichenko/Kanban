@@ -50,13 +50,9 @@ CARD_CHUNK = 3000
 # Не больше стольких кнопок досок в списке (лимит Telegram — около 100 кнопок)
 LIST_MAX = 90
 
-PRIORITY_ICONS = {"critical": "🔴", "medium": "🟡", "minor": "⚪"}
-# Цвета меток (палитра приложения, 10 цветов) → ближайший кружок-эмодзи
-TAG_ICONS = {
-    "red": "🔴", "green": "🟢", "yellow": "🟡", "blue": "🔵", "gray": "⚪",
-    "brown": "🟤", "purple": "🟣", "cyan": "🔵", "pink": "🟣", "lime": "🟢",
-}
-TAG_ICON_DEFAULT = "🏷"
+# Цвета приоритетов как в приложении (static/style.css, --prio-*): критичный —
+# красный, средний — зелёный, малый — серый (серого кружка в эмодзи нет — белый)
+PRIORITY_ICONS = {"critical": "🔴", "medium": "🟢", "minor": "⚪"}
 
 TEXT_NOT_LINKED = "Подключитесь заново кнопкой «Telegram» на стартовой странице приложения."
 TEXT_NEVER_LINKED = ("Здесь можно смотреть свои доски. Чтобы подключиться, нажмите кнопку "
@@ -160,23 +156,16 @@ class Block:
 
 
 def card_blocks(card: dict) -> list:
-    """Карточка: значок приоритета + текст, строкой ниже — метки.
-    Слишком длинный текст режется на несколько блоков."""
+    """Карточка: значок приоритета + текст (метки карточек в боте не
+    показываются). Слишком длинный текст режется на несколько блоков."""
     icon = PRIORITY_ICONS.get(card.get("priority"), "")
     text = str(card.get("text") or "").strip("\n") or "—"
     chunks = [text[i:i + CARD_CHUNK] for i in range(0, len(text), CARD_CHUNK)]
-    tags = card.get("tags") or []
-    tags_plain = " · ".join(f"{TAG_ICON_DEFAULT} {t.get('name', '')}" for t in tags)
-    tags_html = " · ".join(f"{TAG_ICONS.get(t.get('color'), TAG_ICON_DEFAULT)} {esc(t.get('name'))}"
-                           for t in tags)
     blocks = []
     for i, chunk in enumerate(chunks):
         prefix = (icon + " ") if (i == 0 and icon) else ("… " if i else "")
         chunk_html, chunk_plain = rich_text(chunk)
         html_text, plain = prefix + chunk_html, prefix + chunk_plain
-        if i == len(chunks) - 1 and tags:
-            html_text += "\n" + tags_html
-            plain += "\n" + tags_plain
         blocks.append(Block(html_text, plain))
     return blocks
 
