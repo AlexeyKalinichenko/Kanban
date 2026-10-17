@@ -609,6 +609,41 @@ svg { display: block; flex-shrink: 0; }
   background: var(--hover);
 }
 
+/* Правый верхний угол: «Telegram» и переключатель темы */
+.top-right {
+  position: fixed;
+  top: 24px;
+  right: 32px;
+  z-index: 100;
+  display: flex;
+  gap: 8px;
+}
+
+.top-right .theme-toggle-btn {
+  position: static;
+}
+
+.theme-toggle-btn[hidden] { display: none; }
+
+/* «Telegram» — приглушённый фирменный голубой Telegram (одинаковый в обеих темах) */
+/* только значок — круглая кнопка */
+.telegram-btn {
+  padding: 0 14px;
+  border-color: transparent;
+  background: #47a3d1;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.telegram-btn:hover {
+  background: #3b90ba;
+}
+
+.telegram-btn:focus-visible {
+  outline: 2px solid #47a3d1;
+  outline-offset: 2px;
+}
+
 /* Плитка доски в цвете фона этой доски — те же насыщенные цвета, что и фон
    на странице доски (см. static/style.css), одинаковые в обеих темах.
    Текст на цветной плитке белый, на жёлтой — тёмный. */
@@ -699,7 +734,7 @@ svg { display: block; flex-shrink: 0; }
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  max-width: min(320px, calc(100vw - 360px));
+  max-width: min(320px, calc(100vw - 500px));
   height: 44px;
   padding: 0 16px 0 20px;
   border-radius: 9999px;
@@ -831,8 +866,8 @@ svg { display: block; flex-shrink: 0; }
     width: 100%;
   }
   .account { left: 16px; top: 16px; }
-  .theme-toggle-btn { right: 16px; top: 16px; }
+  .top-right { right: 16px; top: 16px; }
   .theme-toggle-btn span { display: none; }
   .theme-toggle-btn { padding: 0 14px; }
-  .account-btn { max-width: calc(100vw - 190px); }
+  .account-btn { max-width: calc(100vw - 250px); }
 }

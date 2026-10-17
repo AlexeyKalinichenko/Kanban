@@ -1957,6 +1957,7 @@
     });
 
     boardTitleInput.value = data.title || 'Доска';
+    updateTabTitle();
     fitBoardTitle();
     // цвет фона доски (пустая строка — обычный фон)
     if (window.KanbanBoardBg) {
@@ -2060,6 +2061,12 @@
     }
   }
   boardTitleInput.addEventListener('input', fitBoardTitle);
+
+  // Название доски — и на вкладке браузера (меняется сразу при наборе)
+  function updateTabTitle() {
+    document.title = boardTitleInput.value.trim() || 'Доска';
+  }
+  boardTitleInput.addEventListener('input', updateTabTitle);
   window.addEventListener('resize', fitBoardTitle);
   // шрифт Nunito может догрузиться позже — тогда ширина текста меняется
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitBoardTitle);
