@@ -625,6 +625,25 @@ svg { display: block; flex-shrink: 0; }
 
 .theme-toggle-btn[hidden] { display: none; }
 
+/* «Telegram» — приглушённый фирменный голубой Telegram (одинаковый в обеих темах) */
+/* только значок — круглая кнопка */
+.telegram-btn {
+  padding: 0 14px;
+  border-color: transparent;
+  background: #47a3d1;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.telegram-btn:hover {
+  background: #3b90ba;
+}
+
+.telegram-btn:focus-visible {
+  outline: 2px solid #47a3d1;
+  outline-offset: 2px;
+}
+
 /* Плитка доски в цвете фона этой доски — те же насыщенные цвета, что и фон
    на странице доски (см. static/style.css), одинаковые в обеих темах.
    Текст на цветной плитке белый, на жёлтой — тёмный. */

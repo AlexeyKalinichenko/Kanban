@@ -79,6 +79,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta
+from markupsafe import escape
 from flask import Flask, Response, abort, g, jsonify, redirect, request, session
 
 from accounts import AccountStore, NAME_RULES_TEXT, PASSWORD_MAX, PASSWORD_MIN, VISITS_UNKNOWN, name_key
@@ -196,12 +197,16 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 STATIC_LINK_RE = re.compile(r'((?:src|href)="/static/)([^"?#]+)"')
 
 
-def render_page(filename: str) -> Response:
+def render_page(filename: str, title: str = "") -> Response:
     """Отдаёт HTML-страницу, дописывая к ссылкам на /static/... метку версии
     (?v=<время изменения файла>). После любой правки CSS/JS ссылка меняется,
-    и браузер сразу загружает новую версию, а не берёт старую из кэша."""
+    и браузер сразу загружает новую версию, а не берёт старую из кэша.
+    title — заголовок вкладки браузера вместо того, что записан в файле."""
     with open(os.path.join(BASE_DIR, filename), "r", encoding="utf-8") as f:
         html = f.read()
+    if title:
+        html = re.sub(r"<title>.*?</title>", lambda m: f"<title>{escape(title)}</title>",
+                      html, count=1, flags=re.S)
 
     def add_version(match):
         path = os.path.join(STATIC_DIR, match.group(2))
@@ -952,7 +957,13 @@ def board_page(board_id, owner_id=""):
     path, _ = resolve_board(board_id, owner_id)
     if not path:
         return redirect("/")
-    return render_page("board.html")
+    # на вкладке браузера — название доски (дальше его обновляет static/board.js)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            title = parse_board(f.read()).get("title") or DEFAULT_BOARD_TITLE
+    except OSError:
+        title = DEFAULT_BOARD_TITLE
+    return render_page("board.html", title)
 
 
 @app.route("/favicon.ico")
