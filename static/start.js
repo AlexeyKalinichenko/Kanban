@@ -17,6 +17,7 @@ const ICONS = {
   arrowUp: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
   arrowDown: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
   arrowLeft: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>',
+  pencil: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4 11.5-11.5z"/><path d="M14.5 5.5l3 3"/></svg>',
   users: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.5A6.5 6.5 0 0 1 21.5 20"/></svg>',
   arrowRight: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'
 };
@@ -187,6 +188,7 @@ function createBoardTile(board, shared = false) {
     try {
       await fetch(`/api/boards/${board.id}`, { method: 'DELETE' });
       tile.remove();
+      renderChangesBanner();
       refreshEmptyHint();
     } catch (err) {
       console.error('Не удалось удалить доску:', err);
@@ -281,6 +283,7 @@ async function leaveSharedBoard(board, tile) {
   try {
     await fetch(`/api/board/${board.id}/access/me?owner=${encodeURIComponent(board.owner)}`, { method: 'DELETE' });
     tile.remove();
+    renderChangesBanner();
     refreshSharedSection();
   } catch (err) {
     console.error('Не удалось убрать доску:', err);
@@ -430,6 +433,120 @@ function renderSharedBanner() {
   sharedBanner.appendChild(close);
 }
 
+// --- Уведомление «Доску изменил …» ---
+// Общую доску (свою, открытую другим, или чужую) правил другой участник,
+// пока она не была открыта у вас. Одна доска — «Открыть», несколько —
+// список досок со ссылками. Крестик — больше не напоминать об этих правках
+// (о следующих правках уведомление придёт снова).
+const changesBanner = document.getElementById('changes-banner');
+let changeBoards = [];
+const MAX_CHANGE_LINES = 4;
+
+function changeUrl(c) {
+  return c.owner ? `/board/${c.owner}/${c.id}` : `/board/${c.id}`;
+}
+
+function editorsText(names) {
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} и ${names[1]}`;
+  return `${names[0]}, ${names[1]} и ещё ${names.length - 2}`;
+}
+
+function agoText(seconds) {
+  const min = Math.floor(seconds / 60);
+  if (min < 1) return 'только что';
+  if (min < 60) return `${min} ${plural(min, 'минуту', 'минуты', 'минут')} назад`;
+  const hours = Math.floor(min / 60);
+  if (hours < 24) return `${hours} ${plural(hours, 'час', 'часа', 'часов')} назад`;
+  const days = Math.floor(hours / 24);
+  return `${days} ${plural(days, 'день', 'дня', 'дней')} назад`;
+}
+
+function plural(n, one, few, many) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if ([2, 3, 4].includes(mod10) && ![12, 13, 14].includes(mod100)) return few;
+  return many;
+}
+
+function boardStillListed(c) {
+  // доску могли удалить или убрать у себя прямо на этой странице
+  const grid = c.owner ? sharedGrid : boardsGrid;
+  const sel = c.owner ? `.board-tile[data-owner="${c.owner}"][data-id="${c.id}"]` : `.board-tile[data-id="${c.id}"]`;
+  return !!grid.querySelector(sel);
+}
+
+function renderChangesBanner() {
+  changeBoards = changeBoards.filter(boardStillListed);
+  changesBanner.hidden = changeBoards.length === 0;
+  if (changesBanner.hidden) return;
+  changesBanner.innerHTML = '';
+
+  const icon = document.createElement('span');
+  icon.className = 'shared-banner-icon';
+  icon.innerHTML = ICONS.pencil;
+  const text = document.createElement('div');
+  text.className = 'shared-banner-text';
+  const title = document.createElement('div');
+  title.className = 'shared-banner-title';
+  const message = document.createElement('div');
+  message.className = 'shared-banner-message';
+  text.appendChild(title);
+  text.appendChild(message);
+  changesBanner.appendChild(icon);
+  changesBanner.appendChild(text);
+
+  if (changeBoards.length === 1) {
+    const c = changeBoards[0];
+    const many = c.editors.length > 1;
+    title.textContent = `Доску «${c.title}» ${many ? 'изменили' : 'изменил пользователь'} ${editorsText(c.editors)}`;
+    message.textContent = `Последняя правка — ${agoText(c.ago)}.`;
+    const open = document.createElement('a');
+    open.className = 'shared-banner-btn';
+    open.textContent = 'Открыть';
+    open.href = changeUrl(c);
+    changesBanner.appendChild(open);
+  } else {
+    title.textContent = `Изменения на ${changeBoards.length} ${plural(changeBoards.length, 'общей доске', 'общих досках', 'общих досках')}`;
+    const list = document.createElement('ul');
+    list.className = 'changes-list';
+    changeBoards.slice(0, MAX_CHANGE_LINES).forEach(c => {
+      const li = document.createElement('li');
+      const link = document.createElement('a');
+      link.href = changeUrl(c);
+      link.textContent = `«${c.title}»`;
+      li.appendChild(link);
+      li.appendChild(document.createTextNode(` — ${editorsText(c.editors)}, ${agoText(c.ago)}`));
+      list.appendChild(li);
+    });
+    if (changeBoards.length > MAX_CHANGE_LINES) {
+      const li = document.createElement('li');
+      li.textContent = `и ещё ${changeBoards.length - MAX_CHANGE_LINES}`;
+      list.appendChild(li);
+    }
+    message.appendChild(list);
+  }
+
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'shared-banner-close';
+  close.innerHTML = ICONS.close;
+  close.title = 'Закрыть уведомление';
+  close.setAttribute('aria-label', close.title);
+  close.addEventListener('click', () => {
+    const shown = changeBoards.map(c => ({ owner: c.owner, id: c.id }));
+    changeBoards = [];
+    changesBanner.hidden = true;
+    fetch('/api/activity/notified', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boards: shown })
+    }).catch(() => {});
+  });
+  changesBanner.appendChild(close);
+}
+
 function closeTileMenus() {
   document.querySelectorAll('.tile-menu').forEach(m => { m.hidden = true; });
 }
@@ -496,6 +613,8 @@ async function loadBoards() {
     });
     bannerBoards = (data.shared || []).filter(b => b.notify);
     refreshSharedSection();
+    changeBoards = data.changes || [];
+    renderChangesBanner();
   } catch (err) {
     console.error('Не удалось загрузить список досок:', err);
     boardsGrid.appendChild(createAddTile());

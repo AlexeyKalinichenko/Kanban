@@ -871,3 +871,49 @@ svg { display: block; flex-shrink: 0; }
   .theme-toggle-btn { padding: 0 14px; }
   .account-btn { max-width: calc(100vw - 250px); }
 }
+
+/* Уведомление «Доску изменил …» (static/start.js) — как «Вам открыли доступ» */
+.changes-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+
+.changes-list li {
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+.changes-list a {
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.changes-list a:hover {
+  text-decoration: underline;
+}
+
+/* Версия релиза (файл version) — всегда внизу окна, по центру; не мешает
+   нажимать на то, что под ней */
+.app-version {
+  position: fixed;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  z-index: 5;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: var(--page);
+  color: var(--text2);
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.8;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* место под строкой версии, чтобы она не закрывала последний ряд плиток */
+.page {
+  padding-bottom: 40px;
+}
