@@ -200,6 +200,18 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 STATIC_LINK_RE = re.compile(r'((?:src|href)="/static/)([^"?#]+)"')
 
 
+VERSION_FILE = os.path.join(BASE_DIR, "version")
+
+
+def read_app_version() -> str:
+    """Версия релиза из файла version (например, 1.2.1) или "", если файла нет."""
+    try:
+        with open(VERSION_FILE, "r", encoding="utf-8") as f:
+            return f.read().strip()[:40]
+    except OSError:
+        return ""
+
+
 def render_page(filename: str, title: str = "") -> Response:
     """Отдаёт HTML-страницу, дописывая к ссылкам на /static/... метку версии
     (?v=<время изменения файла>). После любой правки CSS/JS ссылка меняется,
@@ -207,6 +219,13 @@ def render_page(filename: str, title: str = "") -> Response:
     title — заголовок вкладки браузера вместо того, что записан в файле."""
     with open(os.path.join(BASE_DIR, filename), "r", encoding="utf-8") as f:
         html = f.read()
+    # номер версии релиза (файл version рядом с app.py) — в подвале страницы;
+    # файл читается при каждой отдаче страницы, перезапуск не нужен
+    version = read_app_version()
+    if version:
+        html = html.replace("__APP_VERSION__", str(escape(version)))
+    else:
+        html = re.sub(r'\s*<footer class="app-version".*?</footer>', "", html, flags=re.S)
     if title:
         html = re.sub(r"<title>.*?</title>", lambda m: f"<title>{escape(title)}</title>",
                       html, count=1, flags=re.S)
