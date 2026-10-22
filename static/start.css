@@ -871,3 +871,25 @@ svg { display: block; flex-shrink: 0; }
   .theme-toggle-btn { padding: 0 14px; }
   .account-btn { max-width: calc(100vw - 250px); }
 }
+
+/* Уведомление «Доску изменил …» (static/start.js) — как «Вам открыли доступ» */
+.changes-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+
+.changes-list li {
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+.changes-list a {
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.changes-list a:hover {
+  text-decoration: underline;
+}

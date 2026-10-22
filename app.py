@@ -87,6 +87,7 @@ from events import EventLog, fingerprint, is_bot, local_iso, short_user_agent
 import stats
 from merge import merge_boards
 from shares import ShareStore
+from activity import ActivityStore
 
 # Напоминание «Задайте пароль, чтобы не потерять доступ» показывается
 # начиная с этого захода в аккаунт (заход — см. accounts.VISIT_GAP_MINUTES)
@@ -136,6 +137,8 @@ def is_untouched_template_board(path: str, board_id: str) -> bool:
 
 # Общие доски (кому владелец открыл доступ) — Data/shares.txt, см. shares.py
 shares = ShareStore(DATA_DIR)
+# Правки на общих досках — для уведомлений «доску изменил …» (activity.py)
+activity = ActivityStore(DATA_DIR)
 
 # функции разбора досок определены ниже — передаём обёртку; аккаунт с общими
 # досками при чистке пустым не считается
@@ -868,6 +871,7 @@ def _housekeeping(do_cleanup: bool) -> None:
                 # у удалённого аккаунта общих досок нет (иначе его бы не
                 # удалили), но на всякий случай убираем его доступы
                 shares.remove_user(u["id"])
+                activity.remove_user(u["id"])
             events.prune()
     except Exception as err:  # фоновая уборка не должна ронять сервер
         print("[accounts] ошибка чистки:", err)
@@ -1268,7 +1272,7 @@ def list_boards():
     user = current_user()
     share_counts = shares.counts_for_owner(user["id"]) if user else {}
     boards = own_boards(folder, share_counts)
-    response = jsonify({"boards": boards, "shared": shared_with_me()})
+    response = jsonify({"boards": boards, "shared": shared_with_me(), "changes": board_changes()})
     # список досок всегда должен быть свежим (не из кэша браузера)
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -1310,6 +1314,7 @@ def delete_board(board_id):
     if os.path.exists(path):
         os.remove(path)
     # удалить доску может только владелец — у всех, кому она была открыта, она пропадает
+    activity.remove_board(user["id"], board_id)
     for s in shares.remove_board(user["id"], board_id):
         events.write("board.unshare", uid=user["id"], name=user["name"], board=board_id,
                      to_uid=s["user"], reason="board_delete", ip=client_ip())
@@ -1384,8 +1389,24 @@ def get_board(board_id):
     if owner_id and since is None:
         # получатель открыл чужую доску — она больше не «новая»
         shares.mark_opened(owner_id, board_id, current_user()["id"])
+    # общая доска открыта на экране — чужие правки участник видит сам,
+    # уведомлять о них не нужно
+    owner_key = shared_board_owner(board_id, owner_id)
+    if owner_key:
+        activity.touch_view(owner_key, board_id, current_user()["id"])
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+def shared_board_owner(board_id: str, owner_id: str) -> str:
+    """Владелец доски, если она общая (чужая, открытая текущему пользователю,
+    или своя, открытая кому-то), иначе "" — правки не отслеживаются."""
+    user = current_user()
+    if not user:
+        return ""
+    if owner_id:
+        return owner_id
+    return user["id"] if shares.users_for(user["id"], board_id) else ""
 
 
 def normalize_board(data) -> dict:
@@ -1423,7 +1444,7 @@ def save_board(board_id):
             mine.pop(extra, None)
     # своя доска или чужая, к которой открыт доступ (права у всех одни:
     # смотреть и править)
-    path, _ = resolve_board(board_id, request_owner())
+    path, owner_id = resolve_board(board_id, request_owner())
     if not path:
         return jsonify({"error": "not found"}), 404
     with board_lock(path):
@@ -1446,6 +1467,10 @@ def save_board(board_id):
         result["created"] = current.get("created", "")
         result["revision"] = current["revision"] + 1
         write_text_atomic(path, serialize_board(result))
+    # правка общей доски — остальным участникам придёт уведомление
+    owner_key = shared_board_owner(board_id, owner_id)
+    if owner_key:
+        activity.record_edit(owner_key, board_id, current_user()["id"])
     response = {"status": "ok", "revision": result["revision"]}
     if merged:
         # в доске есть и чужие изменения — браузеру нужна итоговая версия
@@ -1535,6 +1560,63 @@ def add_board_access(board_id):
     return jsonify(access_info(board_id, ""))
 
 
+def board_changes() -> list:
+    """Уведомления «доску изменил …»: общие доски (свои, открытые другим, и
+    чужие, открытые мне), которые после того, как я их видел, правил кто-то
+    другой. Сначала — с самыми свежими правками."""
+    user = current_user()
+    if not user:
+        return []
+    me = user["id"]
+    boards = [(me, board_id, "") for board_id in shares.counts_for_owner(me)]
+    # чужие доски — только уже открытые: о новых говорит уведомление
+    # «Вам открыли доступ…»; правки до получения доступа не в счёт
+    boards += [(s["owner"], s["board"], s["at"]) for s in shares.boards_for(me) if s["opened"]]
+    now = datetime.now()
+    result = []
+    for owner_id, board_id, since in boards:
+        changes = activity.changes_for(owner_id, board_id, me, since)
+        if not changes:
+            continue
+        path = os.path.join(accounts.user_dir(owner_id), f"{board_id}.txt")
+        summary = board_summary(board_id, path)
+        if not summary:
+            continue
+        names = [u["name"] for u in (accounts.get(uid) for uid, _ in changes) if u]
+        if not names:
+            continue
+        try:
+            ago = max(0, int((now - datetime.fromisoformat(changes[0][1])).total_seconds()))
+        except ValueError:
+            ago = 0
+        result.append({
+            "id": board_id,
+            "owner": "" if owner_id == me else owner_id,
+            "title": summary["title"],
+            "editors": names,
+            "ago": ago,            # сколько секунд назад была последняя правка
+        })
+    result.sort(key=lambda c: c["ago"])
+    return result
+
+
+@app.route("/api/activity/notified", methods=["POST"])
+def activity_notified():
+    """Закрыли уведомление «доску изменил …» — о показанных в нём правках
+    больше не напоминаем (о следующих правках уведомление придёт снова)."""
+    user = current_user()
+    if user:
+        # только доски, которые были в показанном уведомлении (правка, пришедшая
+        # после загрузки страницы, не должна пропасть незамеченной)
+        payload = request.get_json(force=True, silent=True) or {}
+        shown = {(str(b.get("owner") or ""), str(b.get("id") or ""))
+                 for b in payload.get("boards") or [] if isinstance(b, dict)}
+        boards = [(c["owner"] or user["id"], c["id"]) for c in board_changes()
+                  if (c["owner"], c["id"]) in shown]
+        activity.mark_notified(user["id"], boards)
+    return jsonify({"status": "ok"})
+
+
 @app.route("/api/shared/notified", methods=["POST"])
 def shared_notified():
     """Получатель закрыл уведомление о новых досках на стартовой странице
@@ -1564,6 +1646,12 @@ def remove_board_access(board_id, user_id):
         events.write("board.unshare", uid=owner_id, name=owner["name"] if owner else None,
                      board=board_id, to_uid=user_id,
                      reason="owner" if owner_id == user["id"] else "leave", ip=client_ip())
+        # отметки о правках и просмотрах этого участника больше не нужны; если
+        # у доски не осталось получателей, она больше не общая — не нужны все
+        if shares.users_for(owner_id, board_id):
+            activity.remove_participant(owner_id, board_id, user_id)
+        else:
+            activity.remove_board(owner_id, board_id)
     if owner_id != user["id"]:
         return jsonify({"status": "ok"})
     return jsonify(access_info(board_id, ""))
