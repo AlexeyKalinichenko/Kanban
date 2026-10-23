@@ -894,26 +894,115 @@ svg { display: block; flex-shrink: 0; }
   text-decoration: underline;
 }
 
-/* Версия релиза (файл version) — всегда внизу окна, по центру; не мешает
-   нажимать на то, что под ней */
+/* Версия релиза (файл version) — в самом низу страницы, по центру: после
+   всех досок, а если досок мало — внизу окна. Видна, когда долистаешь. */
+.page {
+  position: relative;
+  /* страница не ниже окна (за вычетом отступов body сверху и снизу) */
+  min-height: calc(100vh - 144px);
+  min-height: calc(100dvh - 144px);
+  padding-bottom: 56px;
+}
+
 .app-version {
-  position: fixed;
-  left: 50%;
-  bottom: 8px;
-  transform: translateX(-50%);
-  z-index: 5;
-  padding: 2px 8px;
-  border-radius: 9999px;
-  background: var(--page);
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* отступ снизу свой: когда досок много, страница длиннее окна и нижний
+     отступ body (html/body — высотой в окно) после неё не добавляется */
+  bottom: 16px;
+  text-align: center;
   color: var(--text2);
   font-size: 12px;
   line-height: 1.5;
   opacity: 0.8;
-  pointer-events: none;
-  white-space: nowrap;
 }
 
-/* место под строкой версии, чтобы она не закрывала последний ряд плиток */
-.page {
-  padding-bottom: 40px;
+/* Круглая кнопка «+» (создать доску) — в правом нижнем углу экрана, пока
+   плитка «Создать доску» за его пределами (static/start.js) */
+.add-board-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 40;
+  width: 56px;
+  height: 56px;
+  border: none;
+  border-radius: 50%;
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.8);
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+:root[data-theme="light"] .add-board-fab {
+  box-shadow: 0 6px 20px rgba(5, 0, 56, 0.18);
+}
+
+.add-board-fab.visible {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.add-board-fab:hover {
+  opacity: 0.88;
+}
+
+.add-board-fab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+@media (max-width: 640px) {
+  .add-board-fab {
+    right: 16px;
+    bottom: 16px;
+  }
+}
+
+/* Подсказка «Если у вас уже есть аккаунт» под кнопкой «Войти» — гостю при
+   первом открытии (static/account.js) */
+.login-hint {
+  position: absolute;
+  top: calc(100% + 12px);
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--shadow-card);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.login-hint.visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* стрелочка вверх — к середине кнопки «Войти» */
+.login-hint::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: calc(var(--arrow-left, 30px) - 6px);
+  width: 12px;
+  height: 12px;
+  background: inherit;
+  border-radius: 2px;
+  transform: rotate(45deg);
 }

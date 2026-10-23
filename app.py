@@ -1188,7 +1188,7 @@ def login():
         reason = "no_user" if not user else ("bad_password" if user.get("password") else "no_password")
         events.write("login.fail", name=entered[:40], reason=reason, ip=ip, ua=request_ua())
         # одно сообщение для всех случаев — не подсказываем, какие логины существуют
-        return json_error("Неверный логин или пароль.")
+        return json_error("Неверное имя или пароль.")
     start_session(user, "login")
     return jsonify({"status": "ok"})
 
@@ -1291,6 +1291,10 @@ def list_boards():
     user = current_user()
     share_counts = shares.counts_for_owner(user["id"]) if user else {}
     boards = own_boards(folder, share_counts)
+    if not user:
+        # гость видит шаблонные доски — на плитке плашка «Образец»
+        for b in boards:
+            b["template"] = True
     response = jsonify({"boards": boards, "shared": shared_with_me(), "changes": board_changes()})
     # список досок всегда должен быть свежим (не из кэша браузера)
     response.headers["Cache-Control"] = "no-store"

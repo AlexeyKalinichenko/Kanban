@@ -19,6 +19,7 @@ const ICONS = {
   arrowLeft: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>',
   pencil: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4 11.5-11.5z"/><path d="M14.5 5.5l3 3"/></svg>',
   users: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.5A6.5 6.5 0 0 1 21.5 20"/></svg>',
+  plusLarge: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
   arrowRight: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'
 };
 
@@ -47,38 +48,79 @@ function wordForTasks(count) {
   return 'задач';
 }
 
+// Создать доску: плитка «Создать доску» и круглая кнопка «+» внизу справа
+async function createBoardFlow() {
+  // гость: создание доски создаёт аккаунт — сначала окно «Как вас зовут?»
+  if (window.KanbanAccount) await window.KanbanAccount.askNameIfGuest('board_create');
+  const name = await window.KanbanDialog.prompt({
+    title: 'Новая доска',
+    value: 'Новая доска',
+    placeholder: 'Название доски',
+    confirmLabel: 'Создать',
+    maxLength: 60
+  });
+  if (name === null) return;
+  const title = name.trim() || 'Новая доска';
+  try {
+    const res = await fetch('/api/boards', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title })
+    });
+    const data = await res.json();
+    if (data.id) {
+      window.location.href = `/board/${data.id}`;
+    }
+  } catch (err) {
+    console.error('Не удалось создать доску:', err);
+  }
+}
+
+let addTileEl = null;
+
 function createAddTile() {
   const tile = document.createElement('button');
   tile.type = 'button';
   tile.className = 'add-board-tile';
   tile.innerHTML = '<span class="add-board-pill">' + ICONS.plus + 'Создать доску</span>';
-  tile.addEventListener('click', async () => {
-    // гость: создание доски создаёт аккаунт — сначала окно «Как вас зовут?»
-    if (window.KanbanAccount) await window.KanbanAccount.askNameIfGuest('board_create');
-    const name = await window.KanbanDialog.prompt({
-      title: 'Новая доска',
-      value: 'Новая доска',
-      placeholder: 'Название доски',
-      confirmLabel: 'Создать',
-      maxLength: 60
-    });
-    if (name === null) return;
-    const title = name.trim() || 'Новая доска';
-    try {
-      const res = await fetch('/api/boards', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title })
-      });
-      const data = await res.json();
-      if (data.id) {
-        window.location.href = `/board/${data.id}`;
-      }
-    } catch (err) {
-      console.error('Не удалось создать доску:', err);
-    }
-  });
+  tile.addEventListener('click', createBoardFlow);
+  addTileEl = tile;
+  watchAddTile(tile);
   return tile;
+}
+
+// --- Круглая кнопка «+» в правом нижнем углу экрана ---
+// Видна, когда плитка «Создать доску» за пределами экрана (досок много);
+// как только плитка хоть краем показалась — кнопка пропадает. На вкладке
+// «Доступные мне» кнопки нет: там доски не создают.
+const addFab = document.createElement('button');
+addFab.type = 'button';
+addFab.className = 'add-board-fab';
+addFab.innerHTML = ICONS.plusLarge;
+addFab.title = 'Создать доску';
+addFab.setAttribute('aria-label', 'Создать доску');
+addFab.addEventListener('click', createBoardFlow);
+document.body.appendChild(addFab);
+
+let addTileOnScreen = true;
+let addTileObserver = null;
+
+function updateAddFab() {
+  const show = !!addTileEl && !addTileOnScreen && activeTab === 'own';
+  addFab.classList.toggle('visible', show);
+  // скрытую кнопку нельзя нажать и до неё не дойти клавишей Tab
+  addFab.tabIndex = show ? 0 : -1;
+  addFab.setAttribute('aria-hidden', show ? 'false' : 'true');
+}
+
+function watchAddTile(tile) {
+  if (!('IntersectionObserver' in window)) return; // очень старый браузер — без кнопки
+  if (addTileObserver) addTileObserver.disconnect();
+  addTileObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => { addTileOnScreen = entry.isIntersecting; });
+    updateAddFab();
+  });
+  addTileObserver.observe(tile);
 }
 
 function wordForPeople(count) {
@@ -261,11 +303,15 @@ function createBoardTile(board, shared = false) {
   tile.appendChild(head);
   tile.appendChild(meta);
   // чужая доска, которую ещё не открывали, — отметка «Новая»
-  if (shared && board.isNew) {
+  // Шаблонная доска у гостя (до создания аккаунта) — плашка «Образец»
+  // (так же, как «Новая»)
+  const badgeText = shared && board.isNew ? 'Новая' : (!shared && board.template ? 'Образец' : '');
+  if (badgeText) {
     tile.classList.add('board-tile-new');
+    if (!shared) tile.classList.add('board-tile-template');
     const badge = document.createElement('span');
     badge.className = 'board-tile-new-badge';
-    badge.textContent = 'Новая';
+    badge.textContent = badgeText;
     tile.appendChild(badge);
   }
   return tile;
@@ -336,6 +382,7 @@ function setTab(tab, remember = true) {
   pageSubtitle.textContent = TAB_TEXT[tab].subtitle;
   document.title = TAB_TEXT[tab].title;
   renderSharedBanner();
+  updateAddFab();
 }
 
 tabButtons.forEach(btn => {
@@ -622,6 +669,17 @@ async function loadBoards() {
 }
 
 loadBoards();
+
+// Гость создал аккаунт (окно имени, пароль, первое изменение): шаблонные
+// доски скопированы в его пространство и стали его досками — плашки
+// «Образец» больше не нужны
+window.addEventListener('kanban:account-created', () => {
+  document.querySelectorAll('.board-tile-template').forEach(tile => {
+    tile.classList.remove('board-tile-template', 'board-tile-new');
+    const badge = tile.querySelector('.board-tile-new-badge');
+    if (badge) badge.remove();
+  });
+});
 
 // Открыли недействующую ссылку-приглашение на доску (её выключили или
 // заменили новой) — сервер вернул сюда с ?invite=invalid

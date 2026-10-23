@@ -33,6 +33,11 @@
 
   function setAccount(account) {
     accountPromise = Promise.resolve(account);
+    // аккаунт создан (гость больше не гость) — сообщаем странице: например,
+    // стартовая убирает с плиток плашки «Образец»
+    if (account && !account.guest) {
+      window.dispatchEvent(new CustomEvent('kanban:account-created', { detail: account }));
+    }
   }
 
   function notePrompt(action) {
