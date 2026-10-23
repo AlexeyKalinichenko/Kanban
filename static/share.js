@@ -58,7 +58,8 @@
   function openDialog() {
     const previousFocus = document.activeElement;
     const overlay = document.createElement('div');
-    overlay.className = 'confirm-overlay';
+    // ym-hide-content: Вебвизор Яндекс Метрики не записывает логины и ссылку
+    overlay.className = 'confirm-overlay ym-hide-content ym-disable-keys';
     const dialog = document.createElement('div');
     dialog.className = 'confirm-dialog share-dialog';
     dialog.setAttribute('role', 'dialog');

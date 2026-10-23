@@ -23,7 +23,8 @@
       const previousFocus = document.activeElement;
 
       const overlay = document.createElement('div');
-      overlay.className = 'confirm-overlay';
+      // ym-hide-content: Вебвизор Яндекс Метрики не записывает текст окна
+      overlay.className = 'confirm-overlay ym-hide-content ym-disable-keys';
 
       const dialog = document.createElement('div');
       dialog.className = 'confirm-dialog';
@@ -146,7 +147,8 @@
       const previousFocus = document.activeElement;
 
       const overlay = document.createElement('div');
-      overlay.className = 'confirm-overlay';
+      // ym-hide-content: Вебвизор Яндекс Метрики не записывает текст окна
+      overlay.className = 'confirm-overlay ym-hide-content ym-disable-keys';
 
       // noAutofill: окно не похоже на форму входа — без <form>, поля типа
       // «поиск» с нейтральными именами. Иначе Safari (и менеджеры паролей)
