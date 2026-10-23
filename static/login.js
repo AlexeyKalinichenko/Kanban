@@ -47,7 +47,7 @@
     const name = nameInput.value.trim();
     const password = passwordInput.value;
     if (!name || !password) {
-      errorEl.textContent = 'Введите логин и пароль.';
+      errorEl.textContent = 'Введите ваше имя и пароль.';
       (name ? passwordInput : nameInput).focus();
       return;
     }

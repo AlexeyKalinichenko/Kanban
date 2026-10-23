@@ -15,6 +15,10 @@
   const banner = document.getElementById('password-banner');
   const loginBtn = document.getElementById('login-btn');
   const telegramBtn = document.getElementById('telegram-btn');
+  // Telegram пока скрыт: и кнопка на стартовой странице, и пункт «Отключить
+  // Telegram» в меню аккаунта (код бота и привязки остаётся рабочим).
+  // Чтобы вернуть — поставить true.
+  const SHOW_TELEGRAM_BUTTON = false;
 
   let account = null;
 
@@ -29,6 +33,37 @@
     return { ok: res.ok, data };
   }
 
+  // Подсказка «Если у вас уже есть аккаунт» под кнопкой «Войти» — гостю при
+  // каждом открытии стартовой страницы. Пропадает при первом действии:
+  // клике/касании где угодно или нажатии клавиши; прокрутка — не действие
+  // (человек ещё разглядывает доски).
+  let loginHint = null;
+
+  function showLoginHint() {
+    if (loginHint) return;
+    loginHint = document.createElement('div');
+    loginHint.className = 'login-hint';
+    loginHint.setAttribute('role', 'note');
+    loginHint.textContent = 'Если у вас уже есть аккаунт';
+    loginBtn.parentElement.appendChild(loginHint);
+    // выноска — под кнопкой «Войти», стрелочка указывает на её середину
+    loginHint.style.left = loginBtn.offsetLeft + 'px';
+    loginHint.style.setProperty('--arrow-left', Math.round(loginBtn.offsetWidth / 2) + 'px');
+    requestAnimationFrame(() => loginHint.classList.add('visible'));
+    // click (а не pointerdown): на телефоне прокрутка пальцем кликом не считается
+    document.addEventListener('click', hideLoginHint, true);
+    document.addEventListener('keydown', hideLoginHint, true);
+  }
+
+  function hideLoginHint() {
+    document.removeEventListener('click', hideLoginHint, true);
+    document.removeEventListener('keydown', hideLoginHint, true);
+    if (!loginHint) return;
+    const hint = loginHint;
+    hint.classList.remove('visible');
+    setTimeout(() => hint.remove(), 200);
+  }
+
   function render() {
     if (!account) return;
     if (window.KanbanGuest) window.KanbanGuest.setAccount(account);
@@ -39,7 +74,7 @@
     menu.innerHTML = '';
     if (account.canRename) addItem(account.guest ? 'Ваше имя' : 'Сменить логин', renameDialog);
     addItem(account.hasPassword ? 'Сменить пароль' : 'Задать пароль', passwordDialog);
-    if (account.telegram) {
+    if (SHOW_TELEGRAM_BUTTON && account.telegram) {
       const tgName = account.telegram.username ? ` (@${account.telegram.username})` : '';
       addItem('Отключить Telegram' + tgName, unlinkTelegram);
     }
@@ -54,8 +89,9 @@
     // «Войти» — только у гостя; когда аккаунт создан, кнопка пропадает
     // (войти в другое пространство можно после «Выйти»)
     loginBtn.hidden = !account.guest;
-    // «Telegram» — если на сервере настроен бот
-    telegramBtn.hidden = !account.telegramBot;
+    if (account.guest) showLoginHint();
+    // «Telegram» — если кнопка включена и на сервере настроен бот
+    telegramBtn.hidden = !SHOW_TELEGRAM_BUTTON || !account.telegramBot;
     telegramBtn.title = account.telegram
       ? 'Telegram подключён' + (account.telegram.username ? ` (@${account.telegram.username})` : '') + ' — открыть бота'
       : 'Смотреть доски в Telegram';
